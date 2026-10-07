@@ -1,25 +1,25 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import styled from 'styled-components'
 import Fab from '@mui/material/Fab'
 import IconButton from '@mui/material/IconButton'
 import Avatar from '@mui/material/Avatar'
 import Tooltip from '@mui/material/Tooltip'
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline'
-import ShareIcon from '@mui/icons-material/Share'
 import LightModeIcon from '@mui/icons-material/LightMode'
 import DarkModeIcon from '@mui/icons-material/DarkMode'
 import CloseIcon from '@mui/icons-material/Close'
 import LightbulbIcon from '@mui/icons-material/Lightbulb'
 import ArrowRightIcon from '@mui/icons-material/ArrowRight'
-import GitHubIcon from '@mui/icons-material/GitHub'
-import TwitterIcon from '@mui/icons-material/Twitter'
 import VideogameAssetIcon from '@mui/icons-material/VideogameAsset'
 import VideogameAssetOffIcon from '@mui/icons-material/VideogameAssetOff'
+import MicIcon from '@mui/icons-material/Mic'
+import MicOffIcon from '@mui/icons-material/MicOff'
 
 import { BackgroundMode } from '../../../types/BackgroundMode'
 import { setShowJoystick, toggleBackgroundMode } from '../stores/UserStore'
 import { useAppSelector, useAppDispatch } from '../hooks'
 import { getAvatarString, getColorByString } from '../util'
+import { toggleMicrophoneMute } from '../web/MicrophoneManager'
 
 const Backdrop = styled.div`
   position: fixed;
@@ -114,7 +114,29 @@ export default function HelperButtonGroup() {
   const roomId = useAppSelector((state) => state.room.roomId)
   const roomName = useAppSelector((state) => state.room.roomName)
   const roomDescription = useAppSelector((state) => state.room.roomDescription)
+  const microphoneMuted = useAppSelector((state) => state.user.microphoneMuted)
   const dispatch = useAppDispatch()
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement
+      const isInputFocused =
+        activeEl?.tagName === 'INPUT' ||
+        activeEl?.tagName === 'TEXTAREA' ||
+        (activeEl as HTMLElement)?.isContentEditable
+      if (isInputFocused) return
+
+      if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault()
+        toggleMicrophoneMute()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
 
   return (
     <Backdrop>
@@ -169,6 +191,9 @@ export default function HelperButtonGroup() {
                 <strong>Enter</strong> to open chat
               </li>
               <li>
+                <strong>M</strong> to mute/unmute microphone
+              </li>
+              <li>
                 <strong>ESC</strong> to close chat
               </li>
             </ul>
@@ -182,15 +207,21 @@ export default function HelperButtonGroup() {
       <ButtonGroup>
         {roomJoined && (
           <>
-            <Tooltip title="Room Info">
+            <Tooltip title={microphoneMuted ? 'Desmutar Microfone (M)' : 'Mutar Microfone (M)'}>
               <StyledFab
                 size="small"
-                onClick={() => {
-                  setShowRoomInfo(!showRoomInfo)
-                  setShowControlGuide(false)
+                onClick={() => toggleMicrophoneMute()}
+                style={{
+                  color: microphoneMuted ? '#f87171' : '#42eacb',
+                  backgroundColor: microphoneMuted
+                    ? 'rgba(239, 68, 68, 0.2)'
+                    : 'rgba(66, 234, 203, 0.2)',
+                  border: microphoneMuted
+                    ? '1px solid rgba(239, 68, 68, 0.4)'
+                    : '1px solid rgba(66, 234, 203, 0.4)',
                 }}
               >
-                <ShareIcon />
+                {microphoneMuted ? <MicOffIcon /> : <MicIcon />}
               </StyledFab>
             </Tooltip>
             <Tooltip title="Control Guide">
@@ -206,20 +237,6 @@ export default function HelperButtonGroup() {
             </Tooltip>
           </>
         )}
-        <Tooltip title="Visit Our GitHub">
-          <StyledFab
-            size="small"
-            href="https://github.com/kevinshen56714/SkyOffice"
-            target="_blank"
-          >
-            <GitHubIcon />
-          </StyledFab>
-        </Tooltip>
-        <Tooltip title="Follow Us on Twitter">
-          <StyledFab size="small" href="https://twitter.com/SkyOfficeApp" target="_blank">
-            <TwitterIcon />
-          </StyledFab>
-        </Tooltip>
         <Tooltip title="Switch Background Theme">
           <StyledFab size="small" onClick={() => dispatch(toggleBackgroundMode())}>
             {backgroundMode === BackgroundMode.DAY ? <DarkModeIcon /> : <LightModeIcon />}

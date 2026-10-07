@@ -4,6 +4,7 @@ import MyPlayer from './MyPlayer'
 import { sittingShiftData } from './Player'
 import WebRTC from '../web/WebRTC'
 import { Event, phaserEvents } from '../events/EventCenter'
+import { proximityAudio } from '../web/ProximityAudio'
 
 export default class OtherPlayer extends Player {
   private targetPosition: [number, number]
@@ -42,6 +43,45 @@ export default class OtherPlayer extends Player {
     ) {
       webRTC.connectToNewUser(this.playerId)
       this.connected = true
+      this.connectionBufferTime = 0
+    }
+  }
+
+  checkProximity(myPlayer: MyPlayer, webRTC: WebRTC) {
+    this.myPlayer = myPlayer
+    const myPlayerId = myPlayer.playerId
+    const dx = this.x - myPlayer.x
+    const dy = this.y - myPlayer.y
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    const inConferenceRoom =
+      this.x < 610 && this.y > 515 && myPlayer.x < 610 && myPlayer.y > 515
+
+    const inProximityRange = dist <= 400 || inConferenceRoom
+
+    // Conecta automaticamente por WebRTC se estiver ao alcance auditivo de proximidade (<= 400px ou sala de reunião)
+    if (
+      !this.connected &&
+      inProximityRange &&
+      this.connectionBufferTime >= 750 &&
+      myPlayer.readyToConnect &&
+      this.readyToConnect &&
+      myPlayer.videoConnected &&
+      myPlayerId > this.playerId
+    ) {
+      webRTC.connectToNewUser(this.playerId)
+      this.connected = true
+      this.connectionBufferTime = 0
+    }
+
+    // Desconecta apenas se afastar para além da margem auditiva (> 480px) fora da sala fechada
+    if (
+      this.connected &&
+      !inConferenceRoom &&
+      dist > 480 &&
+      this.connectionBufferTime >= 1000
+    ) {
+      phaserEvents.emit(Event.PLAYER_DISCONNECTED, this.playerId)
+      this.connected = false
       this.connectionBufferTime = 0
     }
   }
@@ -87,6 +127,9 @@ export default class OtherPlayer extends Player {
   }
 
   destroy(fromScene?: boolean) {
+    const sanitizedId = this.playerId.replace(/[^0-9a-z]/gi, 'G')
+    proximityAudio.removeSource(this.playerId)
+    proximityAudio.removeSource(sanitizedId)
     this.playerContainer.destroy()
 
     super.destroy(fromScene)
@@ -152,20 +195,8 @@ export default class OtherPlayer extends Player {
     this.playContainerBody.setVelocity(vx, vy)
     this.playContainerBody.velocity.setLength(speed)
 
-    // while currently connected with myPlayer
-    // if myPlayer and the otherPlayer stop overlapping, delete video stream
+    // Atualiza temporizador de buffer de conexão
     this.connectionBufferTime += dt
-    if (
-      this.connected &&
-      !this.body.embedded &&
-      this.body.touching.none &&
-      this.connectionBufferTime >= 750
-    ) {
-      if (this.x < 610 && this.y > 515 && this.myPlayer!.x < 610 && this.myPlayer!.y > 515) return
-      phaserEvents.emit(Event.PLAYER_DISCONNECTED, this.playerId)
-      this.connectionBufferTime = 0
-      this.connected = false
-    }
   }
 }
 

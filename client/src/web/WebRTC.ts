@@ -2,6 +2,7 @@ import Peer from 'peerjs'
 import Network from '../services/Network'
 import store from '../stores'
 import { setVideoConnected } from '../stores/UserStore'
+import { proximityAudio } from './ProximityAudio'
 
 export default class WebRTC {
   private myPeer: Peer
@@ -46,6 +47,7 @@ export default class WebRTC {
 
         call.on('stream', (userVideoStream) => {
           this.addVideoStream(video, userVideoStream)
+          proximityAudio.attachRemoteStream(call.peer, userVideoStream)
         })
       }
       // on close is triggered manually with deleteOnCalledVideoStream()
@@ -91,6 +93,8 @@ export default class WebRTC {
 
         call.on('stream', (userVideoStream) => {
           this.addVideoStream(video, userVideoStream)
+          proximityAudio.attachRemoteStream(sanitizedId, userVideoStream)
+          proximityAudio.attachRemoteStream(userId, userVideoStream)
         })
 
         // on close is triggered manually with deleteVideoStream()
@@ -102,6 +106,8 @@ export default class WebRTC {
   addVideoStream(video: HTMLVideoElement, stream: MediaStream) {
     video.srcObject = stream
     video.playsInline = true
+    // Impede o elemento HTML de áudio/vídeo de vazar som a 100% sem efeito espacial 3D
+    video.muted = true
     video.addEventListener('loadedmetadata', () => {
       video.play()
     })
@@ -116,6 +122,8 @@ export default class WebRTC {
       peer?.call.close()
       peer?.video.remove()
       this.peers.delete(sanitizedId)
+      proximityAudio.removeSource(sanitizedId)
+      proximityAudio.removeSource(userId)
     }
   }
 
@@ -127,24 +135,43 @@ export default class WebRTC {
       onCalledPeer?.call.close()
       onCalledPeer?.video.remove()
       this.onCalledPeers.delete(sanitizedId)
+      proximityAudio.removeSource(sanitizedId)
+      proximityAudio.removeSource(userId)
     }
+  }
+
+  setAudioEnabled(enabled: boolean) {
+    if (this.myStream) {
+      this.myStream.getAudioTracks().forEach((track) => {
+        track.enabled = enabled
+      })
+    }
+    proximityAudio.setMicrophoneMuted(!enabled)
+    const audioButton = this.buttonGrid?.querySelector('.audio-btn') as HTMLButtonElement | null
+    if (audioButton) {
+      audioButton.innerText = enabled ? 'Mute' : 'Unmute'
+    }
+  }
+
+  isAudioEnabled(): boolean {
+    if (!this.myStream) return false
+    const track = this.myStream.getAudioTracks()[0]
+    return track ? track.enabled : false
+  }
+
+  toggleAudio(): boolean {
+    const nextState = !this.isAudioEnabled()
+    this.setAudioEnabled(nextState)
+    return nextState
   }
 
   // method to set up mute/unmute and video on/off buttons
   setUpButtons() {
     const audioButton = document.createElement('button')
-    audioButton.innerText = 'Mute'
+    audioButton.className = 'audio-btn'
+    audioButton.innerText = this.isAudioEnabled() ? 'Mute' : 'Unmute'
     audioButton.addEventListener('click', () => {
-      if (this.myStream) {
-        const audioTrack = this.myStream.getAudioTracks()[0]
-        if (audioTrack.enabled) {
-          audioTrack.enabled = false
-          audioButton.innerText = 'Unmute'
-        } else {
-          audioTrack.enabled = true
-          audioButton.innerText = 'Mute'
-        }
-      }
+      this.toggleAudio()
     })
     const videoButton = document.createElement('button')
     videoButton.innerText = 'Video off'

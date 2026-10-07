@@ -17,6 +17,7 @@ export const userSlice = createSlice({
     sessionId: '',
     videoConnected: false,
     loggedIn: false,
+    microphoneMuted: false,
     playerNameMap: new Map<string, string>(),
     showJoystick: window.innerWidth < 650,
   },
@@ -47,6 +48,9 @@ export const userSlice = createSlice({
     setShowJoystick: (state, action: PayloadAction<boolean>) => {
       state.showJoystick = action.payload
     },
+    setMicrophoneMuted: (state, action: PayloadAction<boolean>) => {
+      state.microphoneMuted = action.payload
+    },
   },
 })
 
@@ -58,6 +62,7 @@ export const {
   setPlayerNameMap,
   removePlayerNameMap,
   setShowJoystick,
+  setMicrophoneMuted,
 } = userSlice.actions
 
 export default userSlice.reducer
