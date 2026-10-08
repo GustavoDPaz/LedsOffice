@@ -3,6 +3,9 @@ import styled from 'styled-components'
 import Button from '@mui/material/Button'
 import IconButton from '@mui/material/IconButton'
 import CloseIcon from '@mui/icons-material/Close'
+import ScreenShareIcon from '@mui/icons-material/ScreenShare'
+import StopScreenShareIcon from '@mui/icons-material/StopScreenShare'
+import TvIcon from '@mui/icons-material/Tv'
 
 import { useAppSelector, useAppDispatch } from '../hooks'
 import { closeComputerDialog } from '../stores/ComputerStore'
@@ -42,20 +45,29 @@ const Wrapper = styled.div`
       color: #ff5252;
     }
   }
+
+  .toolbar {
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
 `
 
 const VideoGrid = styled.div`
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-gap: 10px;
+  grid-gap: 12px;
   grid-template-columns: repeat(auto-fit, minmax(40%, 1fr));
+  position: relative;
 
   .video-container {
     position: relative;
     background: black;
     border-radius: 8px;
     overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
 
     video {
       position: absolute;
@@ -73,18 +85,52 @@ const VideoGrid = styled.div`
       bottom: 16px;
       left: 16px;
       color: #fff;
+      background: rgba(0, 0, 0, 0.65);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
       overflow: hidden;
       text-overflow: ellipsis;
-      text-shadow: 0 1px 2px rgb(0 0 0 / 60%), 0 0 2px rgb(0 0 0 / 30%);
+      text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
       white-space: nowrap;
+      z-index: 5;
     }
   }
 `
 
-function VideoContainer({ playerName, stream }) {
+const EmptyPlaceholder = styled.div`
+  grid-column: 1 / -1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #9aa3b2;
+  text-align: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+
+  h3 {
+    margin: 12px 0 6px 0;
+    color: #eee;
+    font-size: 20px;
+  }
+
+  p {
+    margin: 0;
+    font-size: 15px;
+    color: #8b96a8;
+    max-width: 480px;
+  }
+`
+
+function VideoContainer({ playerName, stream }: { playerName?: string; stream: MediaStream }) {
   return (
     <div className="video-container">
-      <Video srcObject={stream} autoPlay></Video>
+      <Video srcObject={stream} autoPlay />
       {playerName && <div className="player-name">{playerName}</div>}
     </div>
   )
@@ -96,6 +142,8 @@ export default function ComputerDialog() {
   const shareScreenManager = useAppSelector((state) => state.computer.shareScreenManager)
   const myStream = useAppSelector((state) => state.computer.myStream)
   const peerStreams = useAppSelector((state) => state.computer.peerStreams)
+
+  const hasAnyStreams = myStream !== null || (peerStreams && peerStreams.size > 0)
 
   return (
     <Backdrop>
@@ -111,7 +159,10 @@ export default function ComputerDialog() {
         <div className="toolbar">
           <Button
             variant="contained"
-            color="secondary"
+            color={shareScreenManager?.myStream ? 'error' : 'secondary'}
+            startIcon={
+              shareScreenManager?.myStream ? <StopScreenShareIcon /> : <ScreenShareIcon />
+            }
             onClick={() => {
               if (shareScreenManager?.myStream) {
                 shareScreenManager?.stopScreenShare()
@@ -125,12 +176,25 @@ export default function ComputerDialog() {
         </div>
 
         <VideoGrid>
-          {myStream && <VideoContainer stream={myStream} playerName="You" />}
+          {hasAnyStreams ? (
+            <>
+              {myStream && <VideoContainer stream={myStream} playerName="Sua Tela (Você)" />}
 
-          {[...peerStreams.entries()].map(([id, { stream }]) => {
-            const playerName = playerNameMap.get(id)
-            return <VideoContainer key={id} playerName={playerName} stream={stream} />
-          })}
+              {peerStreams &&
+                [...peerStreams.entries()].map(([id, { stream }]) => {
+                  const playerName = playerNameMap.get(id) || 'Colega'
+                  return <VideoContainer key={id} playerName={playerName} stream={stream} />
+                })}
+            </>
+          ) : (
+            <EmptyPlaceholder>
+              <TvIcon style={{ fontSize: 56, color: '#42eacb', opacity: 0.8 }} />
+              <h3>Nenhuma tela sendo transmitida no momento</h3>
+              <p>
+                Clique em <strong>SHARE SCREEN</strong> acima para transmitir sua tela para quem estiver usando este computador.
+              </p>
+            </EmptyPlaceholder>
+          )}
         </VideoGrid>
       </Wrapper>
     </Backdrop>

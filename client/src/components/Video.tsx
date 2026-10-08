@@ -1,16 +1,35 @@
 import React, { VideoHTMLAttributes, useEffect, useRef } from 'react'
 
 type PropsType = VideoHTMLAttributes<HTMLVideoElement> & {
-  srcObject: MediaStream
+  srcObject?: MediaStream | null
 }
 
 export default function Video({ srcObject, ...props }: PropsType) {
   const refVideo = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
-    if (!refVideo.current) return
-    refVideo.current.srcObject = srcObject
+    const video = refVideo.current
+    if (!video) return
+
+    if (srcObject) {
+      video.srcObject = srcObject
+      video.playsInline = true
+      // Trigger play on loaded metadata or immediately
+      const handleLoadedMetadata = () => {
+        video.play().catch((err) => {
+          console.warn('Video playback was prevented:', err)
+        })
+      }
+      video.addEventListener('loadedmetadata', handleLoadedMetadata)
+      video.play().catch(() => {})
+
+      return () => {
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      }
+    } else {
+      video.srcObject = null
+    }
   }, [srcObject])
 
-  return <video ref={refVideo} {...props} />
+  return <video ref={refVideo} playsInline autoPlay {...props} />
 }
