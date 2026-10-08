@@ -29,14 +29,14 @@ export default function VideoConnectionDialog() {
       <Wrapper>
         {connectionWarning && (
           <Alert
-            severity="warning"
+            severity="info"
             onClose={() => {
               setConnectionWarning(!connectionWarning)
             }}
           >
-            <AlertTitle>Warning</AlertTitle>
-            No webcam connected
-            <br /> <strong>connect one for full experience!</strong>
+            <AlertTitle>Microphone & Video</AlertTitle>
+            Connect your microphone/webcam for
+            <br /> <strong>3D spatial proximity voice chat!</strong>
           </Alert>
         )}
         <Button
@@ -47,7 +47,7 @@ export default function VideoConnectionDialog() {
             game.network.webRTC?.getUserMedia()
           }}
         >
-          Connect Webcam
+          Connect Mic / Webcam
         </Button>
       </Wrapper>
     </Backdrop>

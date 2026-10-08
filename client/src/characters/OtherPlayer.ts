@@ -89,6 +89,10 @@ export default class OtherPlayer extends Player {
   destroy(fromScene?: boolean) {
     this.playerContainer.destroy()
 
+    if (this.connected) {
+      phaserEvents.emit(Event.PLAYER_DISCONNECTED, this.playerId)
+    }
+
     super.destroy(fromScene)
   }
 
@@ -202,7 +206,7 @@ Phaser.GameObjects.GameObjectFactory.register(
 
     this.scene.physics.world.enableBody(sprite, Phaser.Physics.Arcade.DYNAMIC_BODY)
 
-    const collisionScale = [6, 4]
+    const collisionScale = [12, 10]
     sprite.body
       .setSize(sprite.width * collisionScale[0], sprite.height * collisionScale[1])
       .setOffset(

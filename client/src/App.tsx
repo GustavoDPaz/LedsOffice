@@ -11,6 +11,7 @@ import VideoConnectionDialog from './components/VideoConnectionDialog'
 import Chat from './components/Chat'
 import HelperButtonGroup from './components/HelperButtonGroup'
 import MobileVirtualJoystick from './components/MobileVirtualJoystick'
+import MediaToolbar from './components/MediaToolbar'
 
 const Backdrop = styled.div`
   position: absolute;
@@ -55,6 +56,7 @@ function App() {
   return (
     <Backdrop>
       {ui}
+      {loggedIn && <MediaToolbar />}
       {/* Render HelperButtonGroup if no dialogs are opened. */}
       {!computerDialogOpen && !whiteboardDialogOpen && <HelperButtonGroup />}
     </Backdrop>

@@ -160,6 +160,9 @@ export default function HelperButtonGroup() {
                 <strong>W, A, S, D or arrow keys</strong> to move
               </li>
               <li>
+                <strong>M</strong> to mute / unmute microphone
+              </li>
+              <li>
                 <strong>E</strong> to sit down (when facing a chair)
               </li>
               <li>
@@ -174,7 +177,7 @@ export default function HelperButtonGroup() {
             </ul>
             <p className="tip">
               <LightbulbIcon />
-              Video connection will start if you are close to someone else
+              Spatial audio 3D & video start automatically when close to someone (volume changes with distance & depth)
             </p>
           </Wrapper>
         )}

@@ -27,6 +27,7 @@ export default class Game extends Phaser.Scene {
   private cursors!: NavKeys
   private keyE!: Phaser.Input.Keyboard.Key
   private keyR!: Phaser.Input.Keyboard.Key
+  private keyM!: Phaser.Input.Keyboard.Key
   private map!: Phaser.Tilemaps.Tilemap
   myPlayer!: MyPlayer
   private playerSelector!: Phaser.GameObjects.Zone
@@ -48,6 +49,10 @@ export default class Game extends Phaser.Scene {
     // maybe we can have a dedicated method for adding keys if more keys are needed in the future
     this.keyE = this.input.keyboard.addKey('E')
     this.keyR = this.input.keyboard.addKey('R')
+    this.keyM = this.input.keyboard.addKey('M')
+    this.keyM.on('down', () => {
+      this.network.webRTC?.toggleMute()
+    })
     this.input.keyboard.disableGlobalCapture()
     this.input.keyboard.on('keydown-ENTER', (event) => {
       store.dispatch(setShowChat(true))
@@ -285,6 +290,18 @@ export default class Game extends Phaser.Scene {
     if (this.myPlayer && this.network) {
       this.playerSelector.update(this.myPlayer, this.cursors)
       this.myPlayer.update(this.playerSelector, this.cursors, this.keyE, this.keyR, this.network)
+
+      if (this.network.webRTC) {
+        this.otherPlayerMap.forEach((otherPlayer, id) => {
+          this.network.webRTC?.updateSpatialAudio(
+            id,
+            this.myPlayer.x,
+            this.myPlayer.y,
+            otherPlayer.x,
+            otherPlayer.y
+          )
+        })
+      }
     }
   }
 }
