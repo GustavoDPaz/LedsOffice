@@ -80,8 +80,8 @@ export default class MyPlayer extends Player {
     switch (this.playerBehavior) {
       case PlayerBehavior.IDLE:
         // if press E in front of selected chair
-        if (Phaser.Input.Keyboard.JustDown(keyE) && item?.itemType === ItemType.CHAIR) {
-          const chairItem = item as Chair
+        const chairItem = playerSelector.selectedChair
+        if (Phaser.Input.Keyboard.JustDown(keyE) && chairItem) {
           /**
            * move player to the chair and play sit animation
            * a delay is called to wait for player movement (from previous velocity) to end
@@ -107,7 +107,11 @@ export default class MyPlayer extends Player {
               }
 
               this.play(`${this.playerTexture}_sit_${chairItem.itemDirection}`, true)
-              playerSelector.selectedItem = undefined
+              playerSelector.selectedChair = undefined
+              if (playerSelector.selectedItem && !this.scene.physics.overlap(playerSelector, playerSelector.selectedItem)) {
+                playerSelector.selectedItem.clearDialogBox()
+                playerSelector.selectedItem = undefined
+              }
               if (chairItem.itemDirection === 'up') {
                 playerSelector.setPosition(this.x, this.y - 32)
               } else if (chairItem.itemDirection === 'down') {
@@ -196,6 +200,7 @@ export default class MyPlayer extends Player {
           this.play(parts.join('_'), true)
           this.playerBehavior = PlayerBehavior.IDLE
           this.chairOnSit?.clearDialogBox()
+          this.chairOnSit = undefined
           playerSelector.setPosition(this.x, this.y)
           playerSelector.update(this, cursors)
           network.updatePlayer(this.x, this.y, this.anims.currentAnim.key)

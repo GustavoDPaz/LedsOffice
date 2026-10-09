@@ -30,7 +30,7 @@ export default class Game extends Phaser.Scene {
   private keyM!: Phaser.Input.Keyboard.Key
   private map!: Phaser.Tilemaps.Tilemap
   myPlayer!: MyPlayer
-  private playerSelector!: Phaser.GameObjects.Zone
+  private playerSelector!: PlayerSelector
   private otherPlayers!: Phaser.Physics.Arcade.Group
   private otherPlayerMap = new Map<string, OtherPlayer>()
   computerMap = new Map<string, Computer>()
@@ -297,53 +297,71 @@ export default class Game extends Phaser.Scene {
     this.network.onChatMessageAdded(this.handleChatMessageAdded, this)
   }
 
-  private handleItemSelectorOverlap(playerSelector, selectionItem) {
-    const currentItem = playerSelector.selectedItem as Item
-    if (currentItem) {
-      if (currentItem === selectionItem) return
+  private handleItemSelectorOverlap(playerSelector: any, selectionItem: any) {
+    const selector = playerSelector as PlayerSelector
+    const item = selectionItem as Item
 
-      // Prioritize computer/whiteboard interactions while sitting or in front of desk
+    if (item.itemType === ItemType.CHAIR) {
+      // Se já estiver sentado, a cadeira atual é gerenciada por player.chairOnSit
       if (this.myPlayer?.playerBehavior === PlayerBehavior.SITTING) {
-        if (
-          currentItem.itemType === ItemType.CHAIR &&
-          selectionItem.itemType === ItemType.COMPUTER
-        ) {
-          // Permite usar o computador quando sentado na cadeira
-        } else if (currentItem.itemType === ItemType.COMPUTER) {
-          return
-        }
-      } else {
-        // Enquanto o jogador estiver em pé, a CADEIRA TEM PRIORIDADE ABSOLUTA sobre o computador
-        // Isso impede que o computador compita ou roube o diálogo "Press E to sit"
-        if (
-          currentItem.itemType === ItemType.CHAIR &&
-          selectionItem.itemType === ItemType.COMPUTER
-        ) {
-          return // Mantém a cadeira selecionada, ignora o computador
-        }
-
-        if (
-          currentItem.itemType === ItemType.COMPUTER &&
-          selectionItem.itemType === ItemType.CHAIR
-        ) {
-          // Se o seletor estava no computador mas encontrou a cadeira, dá foco à cadeira
-          currentItem.clearDialogBox()
-          playerSelector.selectedItem = selectionItem
-          selectionItem.onOverlapDialog()
-          return
-        }
-
-        if (currentItem.depth >= selectionItem.depth && currentItem.itemType === selectionItem.itemType) {
-          return
-        }
+        return
       }
 
-      if (this.myPlayer?.playerBehavior !== PlayerBehavior.SITTING) currentItem.clearDialogBox()
+      const currentChair = selector.selectedChair
+      if (currentChair) {
+        if (currentChair === item) return
+
+        // Se houver múltiplas cadeiras no raio de seleção, escolhe a mais próxima
+        const distCurrent = Phaser.Math.Distance.Between(
+          selector.x,
+          selector.y,
+          currentChair.x,
+          currentChair.y
+        )
+        const distNew = Phaser.Math.Distance.Between(
+          selector.x,
+          selector.y,
+          item.x,
+          item.y
+        )
+        if (distCurrent <= distNew) {
+          return
+        }
+
+        currentChair.clearDialogBox()
+      }
+
+      selector.selectedChair = item as Chair
+      item.onOverlapDialog()
+      return
     }
 
-    // set selected item and set up new dialog
-    playerSelector.selectedItem = selectionItem
-    selectionItem.onOverlapDialog()
+    // Para itens interagíveis com R (Computador, Whiteboard, VendingMachine, etc.)
+    const currentItem = selector.selectedItem
+    if (currentItem) {
+      if (currentItem === item) return
+
+      const distCurrent = Phaser.Math.Distance.Between(
+        selector.x,
+        selector.y,
+        currentItem.x,
+        currentItem.y
+      )
+      const distNew = Phaser.Math.Distance.Between(
+        selector.x,
+        selector.y,
+        item.x,
+        item.y
+      )
+      if (distCurrent <= distNew) {
+        return
+      }
+
+      currentItem.clearDialogBox()
+    }
+
+    selector.selectedItem = item
+    item.onOverlapDialog()
   }
 
   private addObjectFromTiled(

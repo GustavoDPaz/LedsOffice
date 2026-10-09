@@ -2,10 +2,12 @@ import Phaser from 'phaser'
 import MyPlayer from './MyPlayer'
 import { PlayerBehavior } from '../../../types/PlayerBehavior'
 import Item from '../items/Item'
+import Chair from '../items/Chair'
 import { NavKeys } from '../../../types/KeyboardState'
 
 export default class PlayerSelector extends Phaser.GameObjects.Zone {
   selectedItem?: Item
+  selectedChair?: Chair
 
   constructor(scene: Phaser.Scene, x: number, y: number, width: number, height: number) {
     super(scene, x, y, width, height)
@@ -67,7 +69,16 @@ export default class PlayerSelector extends Phaser.GameObjects.Zone {
       this.setPosition(x, y + offset)
     }
 
-    // Enquanto um item estiver selecionado,
+    // Enquanto a cadeira estiver selecionada,
+    // se o seletor deixar de sobrepor a cadeira, limpa o diálogo
+    if (this.selectedChair) {
+      if (!this.scene.physics.overlap(this, this.selectedChair)) {
+        this.selectedChair.clearDialogBox()
+        this.selectedChair = undefined
+      }
+    }
+
+    // Enquanto outro item estiver selecionado,
     // se o seletor deixar de sobrepor o item, limpa a caixa de diálogo
     if (this.selectedItem) {
       if (!this.scene.physics.overlap(this, this.selectedItem)) {

@@ -14,8 +14,11 @@ export default class Item extends Phaser.Physics.Arcade.Sprite {
     this.statusBox = this.scene.add.container().setDepth(10000)
   }
 
+  onOverlapDialog() {}
+
   // add texts into dialog box container
   setDialogBox(text: string) {
+    this.clearDialogBox()
     const innerText = this.scene.add
       .text(0, 0, text)
       .setFontFamily('Arial')
@@ -46,6 +49,7 @@ export default class Item extends Phaser.Physics.Arcade.Sprite {
 
   // add text into status box container
   setStatusBox(text: string) {
+    this.clearStatusBox()
     const innerText = this.scene.add
       .text(0, 0, text)
       .setFontFamily('Arial')
