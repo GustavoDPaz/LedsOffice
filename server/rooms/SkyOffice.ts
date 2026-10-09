@@ -39,8 +39,8 @@ export class SkyOffice extends Room<OfficeState> {
 
     this.setState(new OfficeState())
 
-    // HARD-CODED: Add 5 computers in a room
-    for (let i = 0; i < 5; i++) {
+    // Initialize computers in a room
+    for (let i = 0; i < 50; i++) {
       this.state.computers.set(String(i), new Computer())
     }
 
@@ -51,6 +51,9 @@ export class SkyOffice extends Room<OfficeState> {
 
     // when a player connect to a computer, add to the computer connectedUser array
     this.onMessage(Message.CONNECT_TO_COMPUTER, (client, message: { computerId: string }) => {
+      if (!this.state.computers.has(message.computerId)) {
+        this.state.computers.set(message.computerId, new Computer())
+      }
       this.dispatcher.dispatch(new ComputerAddUserCommand(), {
         client,
         computerId: message.computerId,
@@ -59,6 +62,9 @@ export class SkyOffice extends Room<OfficeState> {
 
     // when a player disconnect from a computer, remove from the computer connectedUser array
     this.onMessage(Message.DISCONNECT_FROM_COMPUTER, (client, message: { computerId: string }) => {
+      if (!this.state.computers.has(message.computerId)) {
+        this.state.computers.set(message.computerId, new Computer())
+      }
       this.dispatcher.dispatch(new ComputerRemoveUserCommand(), {
         client,
         computerId: message.computerId,
@@ -68,13 +74,15 @@ export class SkyOffice extends Room<OfficeState> {
     // when a player stop sharing screen
     this.onMessage(Message.STOP_SCREEN_SHARE, (client, message: { computerId: string }) => {
       const computer = this.state.computers.get(message.computerId)
-      computer.connectedUser.forEach((id) => {
-        this.clients.forEach((cli) => {
-          if (cli.sessionId === id && cli.sessionId !== client.sessionId) {
-            cli.send(Message.STOP_SCREEN_SHARE, client.sessionId)
-          }
+      if (computer) {
+        computer.connectedUser.forEach((id) => {
+          this.clients.forEach((cli) => {
+            if (cli.sessionId === id && cli.sessionId !== client.sessionId) {
+              cli.send(Message.STOP_SCREEN_SHARE, client.sessionId)
+            }
+          })
         })
-      })
+      }
     })
 
     // when a player connect to a whiteboard, add to the whiteboard connectedUser array

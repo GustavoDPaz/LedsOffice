@@ -109,7 +109,13 @@ export default class MyPlayer extends Player {
               this.play(`${this.playerTexture}_sit_${chairItem.itemDirection}`, true)
               playerSelector.selectedItem = undefined
               if (chairItem.itemDirection === 'up') {
-                playerSelector.setPosition(this.x, this.y - this.height)
+                playerSelector.setPosition(this.x, this.y - 32)
+              } else if (chairItem.itemDirection === 'down') {
+                playerSelector.setPosition(this.x, this.y + 32)
+              } else if (chairItem.itemDirection === 'left') {
+                playerSelector.setPosition(this.x - 32, this.y)
+              } else if (chairItem.itemDirection === 'right') {
+                playerSelector.setPosition(this.x + 32, this.y)
               } else {
                 playerSelector.setPosition(0, 0)
               }

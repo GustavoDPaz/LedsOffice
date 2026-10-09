@@ -90,6 +90,7 @@ export default class Game extends Phaser.Scene {
       this.map.createLayer('Ground', FloorAndGround) ||
       this.map.createLayer('Floor', FloorAndGround)
     if (groundLayer) {
+      groundLayer.setDepth(0)
       groundLayer.setCollisionByProperty({ collides: true })
     }
 
@@ -107,9 +108,34 @@ export default class Game extends Phaser.Scene {
     customTileLayers.forEach((layerName) => {
       if (this.map.getLayer(layerName)) {
         const l = this.map.createLayer(layerName, tilesetList)
-        if (l && (layerName === 'Wall' || layerName === 'Objects_collide')) {
-          l.setCollisionByExclusion([-1, 0])
-          collidableTileLayers.push(l)
+        if (l) {
+          if (
+            layerName === 'Wall' ||
+            layerName === 'Objects_collide' ||
+            layerName === 'Furniture'
+          ) {
+            l.setCollisionByExclusion([-1, 0])
+            collidableTileLayers.push(l)
+          }
+          if (layerName === 'Furniture_seat') {
+            l.setDepth(10)
+          } else if (layerName === 'sofa') {
+            l.setDepth(15)
+          } else if (layerName === 'Furniture') {
+            l.setDepth(20)
+          } else if (layerName === 'PCs') {
+            l.setDepth(30)
+          } else if (layerName === 'quadroBranco') {
+            l.setDepth(40)
+          } else if (layerName === 'Wall') {
+            l.setDepth(50)
+          } else if (
+            layerName === 'Wall_nocollide' ||
+            layerName.toLowerCase().includes('nocollid') ||
+            layerName.toLowerCase().includes('wall_no')
+          ) {
+            l.setDepth(6000)
+          }
         }
       }
     })
@@ -122,13 +148,43 @@ export default class Game extends Phaser.Scene {
     // import chair objects from Tiled map to Phaser
     const chairs = this.physics.add.staticGroup({ classType: Chair })
     const chairLayer = this.map.getObjectLayer('Chair')
-    if (chairLayer) {
+    if (chairLayer && chairLayer.objects.length > 0) {
       chairLayer.objects.forEach((chairObj) => {
         const item = this.addObjectFromTiled(chairs, chairObj, 'chairs', 'chair') as Chair
-        if (chairObj.properties && chairObj.properties[0]) {
-          item.itemDirection = chairObj.properties[0].value
+        if (item) {
+          item.setAlpha(0)
+          if (chairObj.properties && chairObj.properties[0]) {
+            item.itemDirection = chairObj.properties[0].value
+          }
         }
       })
+    }
+
+    // Auto-detect chairs from Furniture_seat tile layer if no objects imported
+    if (chairs.getLength() === 0 && this.map.getLayer('Furniture_seat')) {
+      for (let y = 0; y < this.map.height; y++) {
+        for (let x = 0; x < this.map.width; x++) {
+          const tile = this.map.getTileAt(x, y, true, 'Furniture_seat')
+          if (tile && tile.index > 0) {
+            let dir: string | undefined
+            if (tile.index === 2708) dir = 'down'
+            else if (tile.index === 2705) dir = 'up'
+            else if (tile.index === 2710) dir = 'right'
+            else if (tile.index === 2709) dir = 'left'
+
+            if (dir) {
+              const actualX = x * 32 + 16
+              const actualY = y * 32
+              const item = chairs.get(actualX, actualY, 'chairs', 0) as Chair
+              if (item) {
+                item.setAlpha(0)
+                item.setDepth(actualY)
+                item.itemDirection = dir
+              }
+            }
+          }
+        }
+      }
     }
 
     // import computers objects from Tiled map to Phaser
@@ -138,7 +194,8 @@ export default class Game extends Phaser.Scene {
       computerLayer.objects.forEach((obj, i) => {
         const item = this.addObjectFromTiled(computers, obj, 'computers', 'computer') as Computer
         if (item) {
-          item.setDepth(item.y + item.height * 0.27)
+          item.setAlpha(0)
+          item.setDepth(-100)
           const id = `${i}`
           item.id = id
           this.computerMap.set(id, item)
@@ -158,6 +215,8 @@ export default class Game extends Phaser.Scene {
           'whiteboard'
         ) as Whiteboard
         if (item) {
+          item.setAlpha(0)
+          item.setDepth(-100)
           const id = `${i}`
           item.id = id
           this.whiteboardMap.set(id, item)
@@ -224,14 +283,26 @@ export default class Game extends Phaser.Scene {
 
   private handleItemSelectorOverlap(playerSelector, selectionItem) {
     const currentItem = playerSelector.selectedItem as Item
-    // currentItem is undefined if nothing was perviously selected
     if (currentItem) {
-      // if the selection has not changed, do nothing
-      if (currentItem === selectionItem || currentItem.depth >= selectionItem.depth) {
-        return
+      if (currentItem === selectionItem) return
+
+      // Prioritize computer/whiteboard interactions while sitting or in front of desk
+      if (this.myPlayer?.playerBehavior === PlayerBehavior.SITTING) {
+        if (
+          currentItem.itemType === ItemType.CHAIR &&
+          selectionItem.itemType === ItemType.COMPUTER
+        ) {
+          // allow selecting computer while sitting
+        } else if (currentItem.itemType === ItemType.COMPUTER) {
+          return
+        }
+      } else {
+        if (currentItem.depth >= selectionItem.depth && currentItem.itemType === selectionItem.itemType) {
+          return
+        }
       }
-      // if selection changes, clear pervious dialog
-      if (this.myPlayer.playerBehavior !== PlayerBehavior.SITTING) currentItem.clearDialogBox()
+
+      if (this.myPlayer?.playerBehavior !== PlayerBehavior.SITTING) currentItem.clearDialogBox()
     }
 
     // set selected item and set up new dialog
