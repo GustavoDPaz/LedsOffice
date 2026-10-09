@@ -172,9 +172,6 @@ export default class Game extends Phaser.Scene {
     this.network.onItemUserAdded(this.handleItemUserAdded, this)
     this.network.onItemUserRemoved(this.handleItemUserRemoved, this)
     this.network.onChatMessageAdded(this.handleChatMessageAdded, this)
-
-    phaserEvents.on('spawn-audio-clone', this.handleSpawnAudioClone, this)
-    phaserEvents.on('remove-audio-clone', this.handleRemoveAudioClone, this)
   }
 
   private handleItemSelectorOverlap(playerSelector, selectionItem) {
@@ -285,49 +282,6 @@ export default class Game extends Phaser.Scene {
   private handleChatMessageAdded(playerId: string, content: string) {
     const otherPlayer = this.otherPlayerMap.get(playerId)
     otherPlayer?.updateDialogBubble(content)
-  }
-
-  private handleSpawnAudioClone() {
-    const cloneId = 'test-clone-audio'
-    if (this.otherPlayerMap.has(cloneId)) return
-
-    const cloneX = Math.min(1000, Math.max(100, this.myPlayer.x + 60))
-    const cloneY = this.myPlayer.y
-
-    const clonePlayer = this.add.otherPlayer(
-      cloneX,
-      cloneY,
-      this.myPlayer.playerTexture || 'adam',
-      cloneId,
-      'Clone Eco (1s)'
-    )
-    this.otherPlayers.add(clonePlayer)
-    this.otherPlayerMap.set(cloneId, clonePlayer)
-    clonePlayer.updateDialogBubble('🎙️ Eco 1s ativo! Fale no microfone e me ouça...')
-
-    proximityAudio.attachCloneEcho(
-      cloneId,
-      cloneX,
-      cloneY,
-      this.myPlayer.x,
-      this.myPlayer.y,
-      false,
-      (isEchoSpeaking) => {
-        clonePlayer.setSpeaking(isEchoSpeaking)
-      }
-    )
-  }
-
-  private handleRemoveAudioClone() {
-    const cloneId = 'test-clone-audio'
-    if (this.otherPlayerMap.has(cloneId)) {
-      const clonePlayer = this.otherPlayerMap.get(cloneId)
-      if (clonePlayer) {
-        this.otherPlayers.remove(clonePlayer, true, true)
-        this.otherPlayerMap.delete(cloneId)
-      }
-      proximityAudio.removeSource(cloneId)
-    }
   }
 
   update(t: number, dt: number) {

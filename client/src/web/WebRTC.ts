@@ -12,6 +12,7 @@ export default class WebRTC {
   private buttonGrid = document.querySelector('.button-grid')
   private myVideo = document.createElement('video')
   private myStream?: MediaStream
+  private audioStream?: MediaStream
   private network: Network
 
   constructor(userId: string, network: Network) {
@@ -41,12 +42,16 @@ export default class WebRTC {
   initialize() {
     this.myPeer.on('call', (call) => {
       if (!this.onCalledPeers.has(call.peer)) {
-        call.answer(this.myStream)
+        const streamToSend =
+          this.myStream || this.audioStream || proximityAudio.getMicStream() || new MediaStream()
+        call.answer(streamToSend)
         const video = document.createElement('video')
         this.onCalledPeers.set(call.peer, { call, video })
 
         call.on('stream', (userVideoStream) => {
-          this.addVideoStream(video, userVideoStream)
+          if (userVideoStream.getVideoTracks().length > 0) {
+            this.addVideoStream(video, userVideoStream)
+          }
           proximityAudio.attachRemoteStream(call.peer, userVideoStream)
         })
       }
@@ -75,30 +80,57 @@ export default class WebRTC {
         this.setUpButtons()
         store.dispatch(setVideoConnected(true))
         this.network.videoConnected()
+        this.setAudioStream(stream)
       })
       .catch((error) => {
         if (alertOnError) window.alert('No webcam or microphone found, or permission is blocked')
       })
   }
 
+  setAudioStream(stream: MediaStream | null) {
+    this.audioStream = stream || undefined
+    const audioTrack = stream && stream.getAudioTracks().length > 0 ? stream.getAudioTracks()[0] : null
+
+    const updateCall = (item: { call: Peer.MediaConnection }) => {
+      try {
+        const pc = (item.call as any).peerConnection as RTCPeerConnection | undefined
+        if (!pc) return
+        const senders = pc.getSenders()
+        const audioSender = senders.find((s) => s.track?.kind === 'audio')
+        if (audioSender) {
+          audioSender.replaceTrack(audioTrack)
+        } else if (audioTrack && stream) {
+          pc.addTrack(audioTrack, stream)
+        }
+      } catch (err) {
+        console.warn('[WebRTC] Erro ao sincronizar track de áudio:', err)
+      }
+    }
+
+    this.peers.forEach(updateCall)
+    this.onCalledPeers.forEach(updateCall)
+  }
+
   // method to call a peer
   connectToNewUser(userId: string) {
-    if (this.myStream) {
-      const sanitizedId = this.replaceInvalidId(userId)
-      if (!this.peers.has(sanitizedId)) {
-        console.log('calling', sanitizedId)
-        const call = this.myPeer.call(sanitizedId, this.myStream)
-        const video = document.createElement('video')
-        this.peers.set(sanitizedId, { call, video })
+    const sanitizedId = this.replaceInvalidId(userId)
+    if (!this.peers.has(sanitizedId)) {
+      console.log('calling', sanitizedId)
+      const streamToSend =
+        this.myStream || this.audioStream || proximityAudio.getMicStream() || new MediaStream()
+      const call = this.myPeer.call(sanitizedId, streamToSend)
+      const video = document.createElement('video')
+      this.peers.set(sanitizedId, { call, video })
 
-        call.on('stream', (userVideoStream) => {
+      call.on('stream', (userVideoStream) => {
+        if (userVideoStream.getVideoTracks().length > 0) {
           this.addVideoStream(video, userVideoStream)
-          proximityAudio.attachRemoteStream(sanitizedId, userVideoStream)
-          proximityAudio.attachRemoteStream(userId, userVideoStream)
-        })
+        }
+        proximityAudio.attachRemoteStream(sanitizedId, userVideoStream)
+        proximityAudio.attachRemoteStream(userId, userVideoStream)
+      })
 
-        // on close is triggered manually with deleteVideoStream()
-      }
+      // on close is triggered manually with deleteVideoStream()
     }
   }
 
@@ -146,6 +178,11 @@ export default class WebRTC {
         track.enabled = enabled
       })
     }
+    if (this.audioStream) {
+      this.audioStream.getAudioTracks().forEach((track) => {
+        track.enabled = enabled
+      })
+    }
     proximityAudio.setMicrophoneMuted(!enabled)
     const audioButton = this.buttonGrid?.querySelector('.audio-btn') as HTMLButtonElement | null
     if (audioButton) {
@@ -154,8 +191,9 @@ export default class WebRTC {
   }
 
   isAudioEnabled(): boolean {
-    if (!this.myStream) return false
-    const track = this.myStream.getAudioTracks()[0]
+    const stream = this.audioStream || this.myStream || proximityAudio.getMicStream()
+    if (!stream) return false
+    const track = stream.getAudioTracks()[0]
     return track ? track.enabled : false
   }
 

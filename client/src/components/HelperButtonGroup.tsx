@@ -28,6 +28,7 @@ const Backdrop = styled.div`
   bottom: 16px;
   right: 16px;
   align-items: flex-end;
+  z-index: 10;
 
   .wrapper-group {
     display: flex;
@@ -108,6 +109,7 @@ const StyledFab = styled(Fab)<{ target?: string }>`
 export default function HelperButtonGroup() {
   const [showControlGuide, setShowControlGuide] = useState(false)
   const [showRoomInfo, setShowRoomInfo] = useState(false)
+
   const showJoystick = useAppSelector((state) => state.user.showJoystick)
   const backgroundMode = useAppSelector((state) => state.user.backgroundMode)
   const roomJoined = useAppSelector((state) => state.room.roomJoined)
@@ -194,12 +196,12 @@ export default function HelperButtonGroup() {
                 <strong>M</strong> to mute/unmute microphone
               </li>
               <li>
-                <strong>ESC</strong> to close chat
+                <strong>ESC</strong> to close chat / screen share
               </li>
             </ul>
             <p className="tip">
               <LightbulbIcon />
-              Video connection will start if you are close to someone else
+              Microfone espacial com profundidade por proximidade ativado!
             </p>
           </Wrapper>
         )}
@@ -207,6 +209,7 @@ export default function HelperButtonGroup() {
       <ButtonGroup>
         {roomJoined && (
           <>
+            {/* Microfone */}
             <Tooltip title={microphoneMuted ? 'Desmutar Microfone (M)' : 'Mutar Microfone (M)'}>
               <StyledFab
                 size="small"
@@ -224,6 +227,7 @@ export default function HelperButtonGroup() {
                 {microphoneMuted ? <MicOffIcon /> : <MicIcon />}
               </StyledFab>
             </Tooltip>
+
             <Tooltip title="Control Guide">
               <StyledFab
                 size="small"

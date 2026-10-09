@@ -38,7 +38,6 @@ export default class OtherPlayer extends Player {
       this.connectionBufferTime >= 750 &&
       myPlayer.readyToConnect &&
       this.readyToConnect &&
-      myPlayer.videoConnected &&
       myPlayerId > this.playerId
     ) {
       webRTC.connectToNewUser(this.playerId)
@@ -50,38 +49,19 @@ export default class OtherPlayer extends Player {
   checkProximity(myPlayer: MyPlayer, webRTC: WebRTC) {
     this.myPlayer = myPlayer
     const myPlayerId = myPlayer.playerId
-    const dx = this.x - myPlayer.x
-    const dy = this.y - myPlayer.y
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    const inConferenceRoom =
-      this.x < 610 && this.y > 515 && myPlayer.x < 610 && myPlayer.y > 515
 
-    const inProximityRange = dist <= 400 || inConferenceRoom
-
-    // Conecta automaticamente por WebRTC se estiver ao alcance auditivo de proximidade (<= 400px ou sala de reunião)
+    // Estabelece conexão WebRTC com o colega assim que ambos estiverem prontos no escritório.
+    // O motor de áudio 3D (ProximityAudio) cuida da atenuação contínua de volume (0 fora do raio de 360px)
+    // eliminando qualquer latência ou travamento de reconexão.
     if (
       !this.connected &&
-      inProximityRange &&
       this.connectionBufferTime >= 750 &&
       myPlayer.readyToConnect &&
       this.readyToConnect &&
-      myPlayer.videoConnected &&
       myPlayerId > this.playerId
     ) {
       webRTC.connectToNewUser(this.playerId)
       this.connected = true
-      this.connectionBufferTime = 0
-    }
-
-    // Desconecta apenas se afastar para além da margem auditiva (> 480px) fora da sala fechada
-    if (
-      this.connected &&
-      !inConferenceRoom &&
-      dist > 480 &&
-      this.connectionBufferTime >= 1000
-    ) {
-      phaserEvents.emit(Event.PLAYER_DISCONNECTED, this.playerId)
-      this.connected = false
       this.connectionBufferTime = 0
     }
   }

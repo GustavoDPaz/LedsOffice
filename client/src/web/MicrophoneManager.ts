@@ -12,40 +12,51 @@ export async function toggleMicrophoneMute(): Promise<boolean> {
   const currentMuted = store.getState().user.microphoneMuted
   const nextMuted = !currentMuted
 
-  // Se o microfone ainda não foi inicializado e o usuário quer desmutar, ativa-o
-  if (!nextMuted && !proximityAudio.getMicStream() && !game?.network?.webRTC?.isAudioEnabled()) {
-    if (game?.network?.webRTC) {
-      game.network.webRTC.getUserMedia(false)
-    }
-    const ok = await proximityAudio.enableMicrophone((_vol, speaking) => {
-      if (game?.myPlayer && !store.getState().user.microphoneMuted) {
-        game.myPlayer.setSpeaking(speaking)
+  if (!nextMuted) {
+    // 1. Inicializa o AudioContext
+    await proximityAudio.init()
+
+    // 2. Se o microfone ainda não foi inicializado, abre via getUserMedia de áudio puro
+    if (!proximityAudio.getMicStream() || !proximityAudio.getMicStream()?.active) {
+      const ok = await proximityAudio.enableMicrophone((_vol, speaking) => {
+        if (game?.myPlayer && !store.getState().user.microphoneMuted) {
+          game.myPlayer.setSpeaking(speaking)
+        }
+      })
+      if (!ok) {
+        return true // Permanece mutado se permissão for negada
       }
-    })
-    if (ok) {
-      store.dispatch(setMicrophoneMuted(false))
-      game?.network?.webRTC?.setAudioEnabled(true)
-      return false
     }
+
+    proximityAudio.setMicrophoneMuted(false)
+
+    // 3. Compartilha a faixa de áudio com a malha WebRTC
+    const stream = proximityAudio.getMicStream()
+    if (stream && game?.network?.webRTC) {
+      game.network.webRTC.setAudioStream(stream)
+    }
+
+    store.dispatch(setMicrophoneMuted(false))
+    return false
+  } else {
+    // 1. Aplica mute no motor de áudio e desabilita faixas
+    proximityAudio.setMicrophoneMuted(true)
+
+    // 2. Desabilita áudio no WebRTC
+    if (game?.network?.webRTC) {
+      game.network.webRTC.setAudioEnabled(false)
+    }
+
+    // 3. Atualiza estado no Redux
+    store.dispatch(setMicrophoneMuted(true))
+
+    // 4. Desliga imediatamente o anel visual de fala do jogador local
+    if (game?.myPlayer) {
+      game.myPlayer.setSpeaking(false)
+    }
+
+    return true
   }
-
-  // 1. Aplica o estado no motor de áudio de proximidade
-  proximityAudio.setMicrophoneMuted(nextMuted)
-
-  // 2. Aplica o estado nas faixas de áudio transmitidas via WebRTC P2P
-  if (game?.network?.webRTC) {
-    game.network.webRTC.setAudioEnabled(!nextMuted)
-  }
-
-  // 3. Atualiza o estado global no Redux
-  store.dispatch(setMicrophoneMuted(nextMuted))
-
-  // 4. Se mutado, desliga imediatamente o anel visual de fala do jogador local
-  if (nextMuted && game?.myPlayer) {
-    game.myPlayer.setSpeaking(false)
-  }
-
-  return nextMuted
 }
 
 export function setMicrophoneMuteState(muted: boolean) {
@@ -63,3 +74,4 @@ export function setMicrophoneMuteState(muted: boolean) {
     game.myPlayer.setSpeaking(false)
   }
 }
+

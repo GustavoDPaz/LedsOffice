@@ -45,6 +45,10 @@ export default class ShareScreenManager {
   }
 
   startScreenShare() {
+    if (store.getState().computer.peerStreams.size > 0) {
+      return
+    }
+
     // @ts-ignore
     navigator.mediaDevices
       ?.getDisplayMedia({

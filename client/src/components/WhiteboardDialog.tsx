@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import styled from 'styled-components'
 import IconButton from '@mui/material/IconButton'
 import CloseIcon from '@mui/icons-material/Close'
@@ -52,6 +52,19 @@ const WhiteboardWrapper = styled.div`
 export default function WhiteboardDialog() {
   const whiteboardUrl = useAppSelector((state) => state.whiteboard.whiteboardUrl)
   const dispatch = useAppDispatch()
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        e.preventDefault()
+        dispatch(closeWhiteboardDialog())
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [dispatch])
 
   return (
     <Backdrop>
