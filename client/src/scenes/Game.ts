@@ -82,56 +82,97 @@ export default class Game extends Phaser.Scene {
 
     this.map = this.make.tilemap({ key: 'tilemap' })
     const FloorAndGround = this.map.addTilesetImage('FloorAndGround', 'tiles_wall')
+    const ModernOffice = this.map.addTilesetImage('Modern_Office_Black_Shadow', 'office')
+    const Interiors = this.map.addTilesetImage('Interiors_free_32x32', 'interiors')
+    const tilesetList = [FloorAndGround, ModernOffice, Interiors].filter(Boolean) as Phaser.Tilemaps.Tileset[]
 
-    const groundLayer = this.map.createLayer('Ground', FloorAndGround)
-    groundLayer.setCollisionByProperty({ collides: true })
+    const groundLayer =
+      this.map.createLayer('Ground', FloorAndGround) ||
+      this.map.createLayer('Floor', FloorAndGround)
+    if (groundLayer) {
+      groundLayer.setCollisionByProperty({ collides: true })
+    }
 
-    // debugDraw(groundLayer, this)
+    const customTileLayers = [
+      'Wall',
+      'Wall_nocollide',
+      'Furniture',
+      'Furniture_seat',
+      'Objects_collide',
+      'sofa',
+      'PCs',
+      'quadroBranco',
+    ]
+    const collidableTileLayers: Phaser.Tilemaps.TilemapLayer[] = []
+    customTileLayers.forEach((layerName) => {
+      if (this.map.getLayer(layerName)) {
+        const l = this.map.createLayer(layerName, tilesetList)
+        if (l && (layerName === 'Wall' || layerName === 'Objects_collide')) {
+          l.setCollisionByExclusion([-1, 0])
+          collidableTileLayers.push(l)
+        }
+      }
+    })
 
-    this.myPlayer = this.add.myPlayer(705, 500, 'adam', this.network.mySessionId)
+    const spawnX = this.map.width > 50 ? 1360 : 705
+    const spawnY = this.map.width > 50 ? 272 : 500
+    this.myPlayer = this.add.myPlayer(spawnX, spawnY, 'adam', this.network.mySessionId)
     this.playerSelector = new PlayerSelector(this, 0, 0, 16, 16)
 
     // import chair objects from Tiled map to Phaser
     const chairs = this.physics.add.staticGroup({ classType: Chair })
     const chairLayer = this.map.getObjectLayer('Chair')
-    chairLayer.objects.forEach((chairObj) => {
-      const item = this.addObjectFromTiled(chairs, chairObj, 'chairs', 'chair') as Chair
-      // custom properties[0] is the object direction specified in Tiled
-      item.itemDirection = chairObj.properties[0].value
-    })
+    if (chairLayer) {
+      chairLayer.objects.forEach((chairObj) => {
+        const item = this.addObjectFromTiled(chairs, chairObj, 'chairs', 'chair') as Chair
+        if (chairObj.properties && chairObj.properties[0]) {
+          item.itemDirection = chairObj.properties[0].value
+        }
+      })
+    }
 
     // import computers objects from Tiled map to Phaser
     const computers = this.physics.add.staticGroup({ classType: Computer })
     const computerLayer = this.map.getObjectLayer('Computer')
-    computerLayer.objects.forEach((obj, i) => {
-      const item = this.addObjectFromTiled(computers, obj, 'computers', 'computer') as Computer
-      item.setDepth(item.y + item.height * 0.27)
-      const id = `${i}`
-      item.id = id
-      this.computerMap.set(id, item)
-    })
+    if (computerLayer) {
+      computerLayer.objects.forEach((obj, i) => {
+        const item = this.addObjectFromTiled(computers, obj, 'computers', 'computer') as Computer
+        if (item) {
+          item.setDepth(item.y + item.height * 0.27)
+          const id = `${i}`
+          item.id = id
+          this.computerMap.set(id, item)
+        }
+      })
+    }
 
     // import whiteboards objects from Tiled map to Phaser
     const whiteboards = this.physics.add.staticGroup({ classType: Whiteboard })
     const whiteboardLayer = this.map.getObjectLayer('Whiteboard')
-    whiteboardLayer.objects.forEach((obj, i) => {
-      const item = this.addObjectFromTiled(
-        whiteboards,
-        obj,
-        'whiteboards',
-        'whiteboard'
-      ) as Whiteboard
-      const id = `${i}`
-      item.id = id
-      this.whiteboardMap.set(id, item)
-    })
+    if (whiteboardLayer) {
+      whiteboardLayer.objects.forEach((obj, i) => {
+        const item = this.addObjectFromTiled(
+          whiteboards,
+          obj,
+          'whiteboards',
+          'whiteboard'
+        ) as Whiteboard
+        if (item) {
+          const id = `${i}`
+          item.id = id
+          this.whiteboardMap.set(id, item)
+        }
+      })
+    }
 
     // import vending machine objects from Tiled map to Phaser
     const vendingMachines = this.physics.add.staticGroup({ classType: VendingMachine })
     const vendingMachineLayer = this.map.getObjectLayer('VendingMachine')
-    vendingMachineLayer.objects.forEach((obj, i) => {
-      this.addObjectFromTiled(vendingMachines, obj, 'vendingmachines', 'vendingmachine')
-    })
+    if (vendingMachineLayer) {
+      vendingMachineLayer.objects.forEach((obj, i) => {
+        this.addObjectFromTiled(vendingMachines, obj, 'vendingmachines', 'vendingmachine')
+      })
+    }
 
     // import other objects from Tiled map to Phaser
     this.addGroupFromTiled('Wall', 'tiles_wall', 'FloorAndGround', false)
@@ -146,7 +187,12 @@ export default class Game extends Phaser.Scene {
     this.cameras.main.zoom = 1.5
     this.cameras.main.startFollow(this.myPlayer, true)
 
-    this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], groundLayer)
+    if (groundLayer) {
+      this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], groundLayer)
+    }
+    collidableTileLayers.forEach((l) => {
+      this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], l)
+    })
     this.physics.add.collider([this.myPlayer, this.myPlayer.playerContainer], vendingMachines)
 
     this.physics.add.overlap(
@@ -201,9 +247,13 @@ export default class Game extends Phaser.Scene {
   ) {
     const actualX = object.x! + object.width! * 0.5
     const actualY = object.y! - object.height! * 0.5
-    const obj = group
-      .get(actualX, actualY, key, object.gid! - this.map.getTileset(tilesetName).firstgid)
-      .setDepth(actualY)
+    const tileset = this.map.getTileset(tilesetName)
+    const firstgid = tileset ? tileset.firstgid : 0
+    const frame = object.gid ? object.gid - firstgid : 0
+    const obj = group.get(actualX, actualY, key, Math.max(0, frame))
+    if (obj) {
+      obj.setDepth(actualY)
+    }
     return obj
   }
 
@@ -213,13 +263,17 @@ export default class Game extends Phaser.Scene {
     tilesetName: string,
     collidable: boolean
   ) {
-    const group = this.physics.add.staticGroup()
     const objectLayer = this.map.getObjectLayer(objectLayerName)
+    if (!objectLayer) return
+    const tileset = this.map.getTileset(tilesetName)
+    if (!tileset) return
+
+    const group = this.physics.add.staticGroup()
     objectLayer.objects.forEach((object) => {
       const actualX = object.x! + object.width! * 0.5
       const actualY = object.y! - object.height! * 0.5
       group
-        .get(actualX, actualY, key, object.gid! - this.map.getTileset(tilesetName).firstgid)
+        .get(actualX, actualY, key, object.gid! - tileset.firstgid)
         .setDepth(actualY)
     })
     if (this.myPlayer && collidable)

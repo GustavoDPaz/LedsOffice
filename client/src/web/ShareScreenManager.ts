@@ -169,12 +169,19 @@ export default class ShareScreenManager {
     // @ts-ignore
     navigator.mediaDevices
       ?.getDisplayMedia({
-        video: true,
+        video: {
+          width: { ideal: 1920, max: 1920 },
+          height: { ideal: 1080, max: 1080 },
+          frameRate: { ideal: 30, max: 30 },
+        },
         audio: true,
       })
       .then((stream) => {
         const track = stream.getVideoTracks()[0]
         if (track) {
+          if ('contentHint' in track) {
+            track.contentHint = 'detail'
+          }
           track.onended = () => {
             this.stopScreenShare()
           }
@@ -354,6 +361,24 @@ export default class ShareScreenManager {
       if (!call) return
 
       this.activeCalls.set(targetPeerId, call)
+
+      try {
+        const pc = (call as any).peerConnection as RTCPeerConnection | undefined
+        if (pc) {
+          pc.addEventListener('connectionstatechange', () => {
+            if (pc.connectionState === 'connected') {
+              const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+              if (videoSender) {
+                const params = videoSender.getParameters()
+                if (params.encodings && params.encodings.length > 0) {
+                  params.encodings[0].maxBitrate = 2500000 // 2.5 Mbps ideal para 1080p leve
+                  videoSender.setParameters(params).catch(() => {})
+                }
+              }
+            }
+          })
+        }
+      } catch (e) {}
 
       call.on('close', () => {
         this.activeCalls.delete(targetPeerId)

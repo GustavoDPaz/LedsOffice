@@ -52,6 +52,10 @@ export default class Bootstrap extends Phaser.Scene {
       frameWidth: 32,
       frameHeight: 32,
     })
+    this.load.spritesheet('interiors', 'assets/tileset/Interiors_free_32x32.png', {
+      frameWidth: 32,
+      frameHeight: 32,
+    })
     this.load.spritesheet('basement', 'assets/tileset/Basement.png', {
       frameWidth: 32,
       frameHeight: 32,
