@@ -97,9 +97,19 @@ export default class ShareScreenManager {
 
       call.on('stream', (userVideoStream) => {
         console.log('[ShareScreen] Got remote screen stream from:', call.peer)
-        if (userVideoStream.getVideoTracks().length > 0) {
+        const addStream = () => {
           store.dispatch(addVideoStream({ id: call.peer, call, stream: userVideoStream }))
           store.dispatch(setPresenterId(call.peer))
+        }
+
+        if (userVideoStream.getVideoTracks().length > 0) {
+          addStream()
+        } else {
+          userVideoStream.onaddtrack = () => {
+            if (userVideoStream.getVideoTracks().length > 0) {
+              addStream()
+            }
+          }
         }
       })
 
@@ -170,9 +180,9 @@ export default class ShareScreenManager {
     navigator.mediaDevices
       ?.getDisplayMedia({
         video: {
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 },
-          frameRate: { ideal: 30, max: 30 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30, max: 60 },
         },
         audio: true,
       })
@@ -180,7 +190,7 @@ export default class ShareScreenManager {
         const track = stream.getVideoTracks()[0]
         if (track) {
           if ('contentHint' in track) {
-            track.contentHint = 'detail'
+            track.contentHint = 'motion'
           }
           track.onended = () => {
             this.stopScreenShare()

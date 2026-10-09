@@ -7,6 +7,8 @@ import ScreenShareIcon from '@mui/icons-material/ScreenShare'
 import StopScreenShareIcon from '@mui/icons-material/StopScreenShare'
 import DesktopWindowsIcon from '@mui/icons-material/DesktopWindows'
 import LiveTvIcon from '@mui/icons-material/LiveTv'
+import VolumeUpIcon from '@mui/icons-material/VolumeUp'
+import VolumeOffIcon from '@mui/icons-material/VolumeOff'
 import CircularProgress from '@mui/material/CircularProgress'
 
 import { useAppSelector, useAppDispatch } from '../hooks'
@@ -226,6 +228,7 @@ export default function ComputerDialog() {
   const peerStreams = useAppSelector((state) => state.computer.peerStreams)
   const presenterId = useAppSelector((state) => state.computer.presenterId)
   const [isStarting, setIsStarting] = useState(false)
+  const [isAudioMuted, setIsAudioMuted] = useState(false)
 
   // Sair da tela de transmissão ao pressionar ESC
   useEffect(() => {
@@ -296,13 +299,32 @@ export default function ComputerDialog() {
 
             {/* Se outra pessoa está transmitindo: modo espectador garantido (sem botão de compartilhar) */}
             {hasRemotePresenter && !isSharingMyScreen && (
-              <ViewerBadge>
-                <div className="live-dot" />
-                <LiveTvIcon fontSize="small" />
-                <span>
-                  Assistindo transmissão de <strong>{presenterName}</strong>
-                </span>
-              </ViewerBadge>
+              <>
+                <ViewerBadge>
+                  <div className="live-dot" />
+                  <LiveTvIcon fontSize="small" />
+                  <span>
+                    Assistindo transmissão de <strong>{presenterName}</strong>
+                  </span>
+                </ViewerBadge>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={isAudioMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
+                  onClick={() => setIsAudioMuted(!isAudioMuted)}
+                  style={{
+                    color: isAudioMuted ? '#f87171' : '#38bdf8',
+                    borderColor: isAudioMuted ? 'rgba(248, 113, 113, 0.4)' : 'rgba(56, 189, 248, 0.4)',
+                    fontSize: '12px',
+                    textTransform: 'none',
+                    fontWeight: 600,
+                    borderRadius: '8px',
+                    padding: '4px 10px',
+                  }}
+                >
+                  {isAudioMuted ? 'Áudio Mutado' : 'Áudio Ativo'}
+                </Button>
+              </>
             )}
 
             {/* Se ninguém está transmitindo: botão para iniciar transmissão */}
@@ -354,7 +376,7 @@ export default function ComputerDialog() {
           {/* Se outra pessoa estiver transmitindo e a transmissão já carregou */}
           {!isSharingMyScreen && hasRemotePresenter && peerEntries.length > 0 && (
             <StageVideo>
-              <Video srcObject={peerEntries[0][1].stream} autoPlay />
+              <Video srcObject={peerEntries[0][1].stream} autoPlay muted={isAudioMuted} />
               <div className="player-tag">{presenterName}</div>
             </StageVideo>
           )}
