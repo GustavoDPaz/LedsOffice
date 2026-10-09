@@ -20,7 +20,6 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   playerName: Phaser.GameObjects.Text
   playerContainer: Phaser.GameObjects.Container
   private playerDialogBubble: Phaser.GameObjects.Container
-  private speakingIndicator?: Phaser.GameObjects.Arc
   private timeoutID?: number
 
   constructor(
@@ -53,11 +52,6 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       .setColor('#000000')
       .setOrigin(0.5)
     this.playerContainer.add(this.playerName)
-
-    // add speakingIndicator (halo de fala espacial)
-    this.speakingIndicator = this.scene.add.circle(0, 30, 16, 0x42eacb, 0)
-    this.speakingIndicator.setStrokeStyle(0, 0x42eacb, 0)
-    this.playerContainer.add(this.speakingIndicator)
 
     this.scene.physics.world.enable(this.playerContainer)
     const playContainerBody = this.playerContainer.body as Phaser.Physics.Arcade.Body
@@ -112,12 +106,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   setSpeaking(isSpeaking: boolean) {
-    if (this.speakingIndicator) {
-      if (isSpeaking) {
-        this.speakingIndicator.setStrokeStyle(2, 0x42eacb, 0.9)
-      } else {
-        this.speakingIndicator.setStrokeStyle(0, 0x42eacb, 0)
-      }
+    if (isSpeaking) {
+      this.playerName.setColor('#22c55e')
+      this.playerName.setStroke('#14532d', 2)
+    } else {
+      this.playerName.setColor('#000000')
+      this.playerName.setStroke('#000000', 0)
     }
   }
 }

@@ -4,7 +4,6 @@ import MyPlayer from './MyPlayer'
 import { sittingShiftData } from './Player'
 import WebRTC from '../web/WebRTC'
 import { Event, phaserEvents } from '../events/EventCenter'
-import { proximityAudio } from '../web/ProximityAudio'
 
 export default class OtherPlayer extends Player {
   private targetPosition: [number, number]
@@ -31,21 +30,7 @@ export default class OtherPlayer extends Player {
   }
 
   makeCall(myPlayer: MyPlayer, webRTC: WebRTC) {
-    this.myPlayer = myPlayer
-    const myPlayerId = myPlayer.playerId
-    if (
-      !this.connected &&
-      this.connectionBufferTime >= 500 &&
-      myPlayer.readyToConnect &&
-      this.readyToConnect &&
-      myPlayerId > this.playerId
-    ) {
-      const ok = webRTC.connectToNewUser(this.playerId)
-      if (ok) {
-        this.connected = true
-        this.connectionBufferTime = 0
-      }
-    }
+    this.checkProximity(myPlayer, webRTC)
   }
 
   checkProximity(myPlayer: MyPlayer, webRTC: WebRTC) {
@@ -53,17 +38,14 @@ export default class OtherPlayer extends Player {
     const myPlayerId = myPlayer.playerId
 
     if (
-      !this.connected &&
+      !webRTC.isConnectedTo(this.playerId) &&
       this.connectionBufferTime >= 500 &&
       myPlayer.readyToConnect &&
       this.readyToConnect &&
-      myPlayerId > this.playerId
+      (myPlayerId > this.playerId || this.connectionBufferTime > 2500)
     ) {
-      const ok = webRTC.connectToNewUser(this.playerId)
-      if (ok) {
-        this.connected = true
-        this.connectionBufferTime = 0
-      }
+      webRTC.connectToNewUser(this.playerId)
+      this.connectionBufferTime = 0
     }
   }
 
@@ -108,15 +90,8 @@ export default class OtherPlayer extends Player {
   }
 
   destroy(fromScene?: boolean) {
-    const sanitizedId = this.playerId.replace(/[^0-9a-z]/gi, 'G')
-    proximityAudio.removeSource(this.playerId)
-    proximityAudio.removeSource(sanitizedId)
     this.playerContainer.destroy()
-
-    if (this.connected) {
-      phaserEvents.emit(Event.PLAYER_DISCONNECTED, this.playerId)
-    }
-
+    phaserEvents.emit(Event.PLAYER_DISCONNECTED, this.playerId)
     super.destroy(fromScene)
   }
 

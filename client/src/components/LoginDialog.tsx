@@ -17,10 +17,8 @@ import Ash from '../images/login/Ash_login.png'
 import Lucy from '../images/login/Lucy_login.png'
 import Nancy from '../images/login/Nancy_login.png'
 import { useAppSelector, useAppDispatch } from '../hooks'
-import { setLoggedIn, setMicrophoneMuted, setMicMuted } from '../stores/UserStore'
+import { setLoggedIn } from '../stores/UserStore'
 import { getAvatarString, getColorByString } from '../util'
-import { proximityAudio } from '../web/ProximityAudio'
-import store from '../stores'
 
 import phaserGame from '../PhaserGame'
 import Game from '../scenes/Game'
@@ -160,35 +158,11 @@ export default function LoginDialog() {
     } else if (roomJoined) {
       console.log('Join! Name:', name, 'Avatar:', avatars[avatarIndex].name)
 
-      // Desbloqueia AudioContext dentro do clique do usuário para política de autoplay do navegador
-      proximityAudio.init().catch(() => {})
+      // Inicializa contexto de áudio e requisita microfone via WebRTC
       if (game.network?.webRTC) {
-        const ctx = game.network.webRTC.getAudioContext()
-        if (ctx.state === 'suspended') {
-          ctx.resume().catch(() => {})
-        }
+        game.network.webRTC.getAudioContext()
+        game.network.webRTC.ensureMicrophone().catch(() => {})
       }
-
-      // Tenta inicializar o microfone se o usuário permitir
-      proximityAudio
-        .enableMicrophone((_vol, speaking) => {
-          if (game?.myPlayer && !store.getState().user.microphoneMuted) {
-            game.myPlayer.setSpeaking(speaking)
-          }
-        })
-        .then((ok) => {
-          if (ok) {
-            proximityAudio.setMicrophoneMuted(false)
-            const stream = proximityAudio.getMicStream()
-            if (stream && game.network?.webRTC) {
-              game.network.webRTC.setAudioStream(stream)
-              game.network.webRTC.setAudioEnabled(true)
-            }
-            dispatch(setMicrophoneMuted(false))
-            dispatch(setMicMuted(false))
-          }
-        })
-        .catch(() => {})
 
       game.registerKeys()
       game.myPlayer.setPlayerName(name)

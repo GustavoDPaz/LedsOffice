@@ -8,14 +8,9 @@ import {
   setMicrophoneMuted,
 } from '../stores/UserStore'
 import phaserGame from '../PhaserGame'
-import { proximityAudio } from './ProximityAudio'
 
-interface PeerAudioNodes {
-  source: MediaStreamAudioSourceNode
-  filter: BiquadFilterNode
-  panner: StereoPannerNode | null
-  gain: GainNode
-  dummyAudio?: HTMLAudioElement
+interface PeerAudioEntry {
+  audio: HTMLAudioElement
   analyser?: AnalyserNode
 }
 
@@ -23,42 +18,57 @@ export default class WebRTC {
   private myPeer: Peer
   private peers = new Map<string, { call: Peer.MediaConnection; video: HTMLVideoElement }>()
   private onCalledPeers = new Map<string, { call: Peer.MediaConnection; video: HTMLVideoElement }>()
-  private peerAudioNodes = new Map<string, PeerAudioNodes>()
+  private peerAudios = new Map<string, PeerAudioEntry>()
+  private pendingCalls = new Set<string>()
+  private isPeerOpen = false
+
   private videoGrid = document.querySelector('.video-grid')
   private myVideo = document.createElement('video')
   private myStream?: MediaStream
-  private audioStream?: MediaStream
   private network: Network
   private audioContext?: AudioContext
+  private localAnalyser?: AnalyserNode
 
   constructor(userId: string, network: Network) {
     const sanitizedId = this.replaceInvalidId(userId)
     this.myPeer = new Peer(sanitizedId)
     this.network = network
 
-    this.myPeer.on('error', (err) => {
-      console.warn('PeerJS error:', err.type, err)
+    this.myPeer.on('open', (id) => {
+      console.log('[WebRTC] PeerJS conectado com ID:', id)
+      this.isPeerOpen = true
+      this.pendingCalls.forEach((uid) => {
+        this.connectToNewUser(uid)
+      })
+      this.pendingCalls.clear()
+    })
+
+    this.myPeer.on('error', (err: any) => {
+      console.warn('[WebRTC] PeerJS error:', err?.type, err)
     })
 
     // Mute own video element (never listen to yourself)
     this.myVideo.muted = true
 
     // Resume AudioContext on any user interaction with the window
-    window.addEventListener(
-      'click',
-      () => {
-        if (this.audioContext && this.audioContext.state === 'suspended') {
-          this.audioContext.resume().catch(() => {})
+    const unlockAudio = () => {
+      if (this.audioContext && this.audioContext.state === 'suspended') {
+        this.audioContext.resume().catch(() => {})
+      }
+      this.peerAudios.forEach(({ audio }) => {
+        if (audio.paused && audio.srcObject) {
+          audio.play().catch(() => {})
         }
-      },
-      { passive: true }
-    )
+      })
+    }
+    window.addEventListener('click', unlockAudio, { passive: true })
+    window.addEventListener('keydown', unlockAudio, { passive: true })
 
     this.initialize()
   }
 
   getAudioContext(): AudioContext {
-    if (!this.audioContext) {
+    if (!this.audioContext || this.audioContext.state === 'closed') {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
       this.audioContext = new AudioCtx()
     }
@@ -89,18 +99,19 @@ export default class WebRTC {
     }
   }
 
+  isConnectedTo(userId: string): boolean {
+    const sanitizedId = this.replaceInvalidId(userId)
+    return this.peers.has(sanitizedId) || this.onCalledPeers.has(sanitizedId)
+  }
+
   initialize() {
     this.myPeer.on('call', (call) => {
       if (!this.onCalledPeers.has(call.peer)) {
-        const streamToSend =
-          this.myStream ||
-          this.audioStream ||
-          proximityAudio.getMicStream() ||
-          this.createSilentAudioStream()
-
+        console.log('[WebRTC] Recebendo chamada de:', call.peer)
+        const streamToSend = this.myStream || this.createSilentAudioStream()
         call.answer(streamToSend)
+
         const video = document.createElement('video')
-        // Remote video elements are muted because Web Audio spatial audio handles playback
         video.muted = true
         this.onCalledPeers.set(call.peer, { call, video })
 
@@ -108,26 +119,134 @@ export default class WebRTC {
           if (userVideoStream.getVideoTracks().length > 0) {
             this.addVideoStream(video, userVideoStream)
           }
-          this.setupSpatialAudio(call.peer, userVideoStream)
+          this.setupRemoteAudio(call.peer, userVideoStream)
         })
 
         call.on('close', () => {
+          this.deleteOnCalledVideoStream(call.peer)
+        })
+
+        call.on('error', (err) => {
+          console.warn('[WebRTC] Erro na chamada recebida de', call.peer, err)
           this.deleteOnCalledVideoStream(call.peer)
         })
       }
     })
   }
 
-  // Check if permission has been granted before
   checkPreviousPermission() {
     const permissionName = 'microphone' as PermissionName
     navigator.permissions?.query({ name: permissionName }).then((result) => {
-      if (result.state === 'granted') this.getUserMedia(false)
-    })
+      if (result.state === 'granted') {
+        this.ensureMicrophone()
+      }
+    }).catch(() => {})
+  }
+
+  async ensureMicrophone(): Promise<MediaStream | null> {
+    if (this.myStream && this.myStream.getAudioTracks().length > 0) {
+      const track = this.myStream.getAudioTracks()[0]
+      if (track.readyState === 'live') {
+        track.enabled = true
+        store.dispatch(setMicMuted(false))
+        store.dispatch(setMicrophoneMuted(false))
+        return this.myStream
+      }
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      })
+
+      this.myStream = stream
+      this.setupLocalSpeechDetection(stream)
+
+      store.dispatch(setMicMuted(false))
+      store.dispatch(setMicrophoneMuted(false))
+
+      // Atualiza a faixa de áudio em todas as chamadas WebRTC ativas
+      this.updateActiveCallsTrack(stream)
+
+      return stream
+    } catch (err) {
+      console.warn('[WebRTC] Permissao de microfone negada ou indisponivel:', err)
+      return null
+    }
+  }
+
+  private setupLocalSpeechDetection(stream: MediaStream) {
+    try {
+      const ctx = this.getAudioContext()
+      const source = ctx.createMediaStreamSource(stream)
+      this.localAnalyser = ctx.createAnalyser()
+      this.localAnalyser.fftSize = 256
+      source.connect(this.localAnalyser)
+
+      const data = new Uint8Array(this.localAnalyser.frequencyBinCount)
+      const checkVolume = () => {
+        if (!this.myStream || !this.localAnalyser) return
+
+        const track = this.myStream.getAudioTracks()[0]
+        const isMuted = !track || !track.enabled || store.getState().user.microphoneMuted
+
+        if (isMuted) {
+          const game = phaserGame.scene.keys.game as any
+          game?.myPlayer?.setSpeaking(false)
+          requestAnimationFrame(checkVolume)
+          return
+        }
+
+        this.localAnalyser.getByteFrequencyData(data)
+        let sum = 0
+        for (let i = 0; i < data.length; i++) sum += data[i]
+        const avg = sum / data.length
+        const isSpeaking = avg > 8
+
+        const game = phaserGame.scene.keys.game as any
+        game?.myPlayer?.setSpeaking(isSpeaking)
+
+        requestAnimationFrame(checkVolume)
+      }
+
+      requestAnimationFrame(checkVolume)
+    } catch (e) {
+      console.warn('[WebRTC] Falha ao configurar detector de fala local:', e)
+    }
+  }
+
+  private updateActiveCallsTrack(stream: MediaStream) {
+    const audioTrack = stream.getAudioTracks()[0]
+    if (!audioTrack) return
+
+    const updateCall = (item: { call: Peer.MediaConnection }) => {
+      try {
+        const pc = (item.call as any).peerConnection as RTCPeerConnection | undefined
+        if (!pc) return
+        const senders = pc.getSenders()
+        const audioSender = senders.find((s) => s.track?.kind === 'audio')
+        if (audioSender) {
+          audioSender.replaceTrack(audioTrack).catch((err) => {
+            console.warn('[WebRTC] replaceTrack error:', err)
+          })
+        } else {
+          pc.addTrack(audioTrack, stream)
+        }
+      } catch (err) {
+        console.warn('[WebRTC] Erro ao sincronizar track de audio:', err)
+      }
+    }
+
+    this.peers.forEach(updateCall)
+    this.onCalledPeers.forEach(updateCall)
   }
 
   getUserMedia(alertOnError = true) {
-    // 1. Try requesting both video and audio
     navigator.mediaDevices
       ?.getUserMedia({
         video: true,
@@ -137,8 +256,7 @@ export default class WebRTC {
         this.handleMediaStreamSuccess(stream)
       })
       .catch((err) => {
-        console.warn('Webcam+Mic unavailable or denied, attempting Audio only fallback...', err)
-        // 2. Fallback to audio only (ideal for desktops without webcam)
+        console.warn('Webcam+Mic indisponivel, tentando fallback somente áudio...', err)
         navigator.mediaDevices
           ?.getUserMedia({
             video: false,
@@ -148,10 +266,10 @@ export default class WebRTC {
             this.handleMediaStreamSuccess(stream)
           })
           .catch((finalErr) => {
-            console.error('Failed to get media devices:', finalErr)
+            console.error('Falha ao obter dispositivos de mídia:', finalErr)
             if (alertOnError) {
               window.alert(
-                'Nenhum microfone ou webcam foi encontrado, ou a permissão foi negada no navegador.\nVerifique as permissões de mídia do seu navegador.'
+                'Nenhum microfone ou webcam foi encontrado, ou a permissão foi negada no navegador.'
               )
             }
           })
@@ -170,43 +288,9 @@ export default class WebRTC {
     const hasVideo = stream.getVideoTracks().length > 0
     store.dispatch(setVideoMuted(!hasVideo))
 
+    this.setupLocalSpeechDetection(stream)
     this.network.videoConnected()
-    this.setAudioStream(stream)
-  }
-
-  setAudioStream(stream: MediaStream | null) {
-    this.audioStream = stream || undefined
-    const audioTrack =
-      stream && stream.getAudioTracks().length > 0 ? stream.getAudioTracks()[0] : null
-
-    const updateCall = (item: { call: Peer.MediaConnection }) => {
-      try {
-        const pc = (item.call as any).peerConnection as RTCPeerConnection | undefined
-        if (!pc) return
-        const senders = pc.getSenders()
-        const audioSender = senders.find((s) => s.track?.kind === 'audio')
-        if (audioSender) {
-          audioSender.replaceTrack(audioTrack)
-        } else if (audioTrack && stream) {
-          pc.addTrack(audioTrack, stream)
-        }
-      } catch (err) {
-        console.warn('[WebRTC] Erro ao sincronizar track de áudio:', err)
-      }
-    }
-
-    this.peers.forEach(updateCall)
-    this.onCalledPeers.forEach(updateCall)
-
-    // Também conecta a outros jogadores na sala aos quais ainda não ligamos
-    const game = phaserGame.scene.keys.game as any
-    if (game?.otherPlayerMap && game?.myPlayer) {
-      game.otherPlayerMap.forEach((_otherPlayer: any, id: string) => {
-        if (game.myPlayer.playerId > id) {
-          this.connectToNewUser(id)
-        }
-      })
-    }
+    this.updateActiveCallsTrack(stream)
   }
 
   setAudioEnabled(enabled: boolean) {
@@ -215,103 +299,103 @@ export default class WebRTC {
         track.enabled = enabled
       })
     }
-    if (this.audioStream) {
-      this.audioStream.getAudioTracks().forEach((track) => {
-        track.enabled = enabled
-      })
-    }
     store.dispatch(setMicMuted(!enabled))
     store.dispatch(setMicrophoneMuted(!enabled))
+
+    const game = phaserGame.scene.keys.game as any
+    if (!enabled) {
+      game?.myPlayer?.setSpeaking(false)
+    }
   }
 
-  // Call a peer
   connectToNewUser(userId: string): boolean {
-    const streamToSend =
-      this.myStream ||
-      this.audioStream ||
-      proximityAudio.getMicStream() ||
-      this.createSilentAudioStream()
-
     const sanitizedId = this.replaceInvalidId(userId)
-    if (!this.peers.has(sanitizedId)) {
-      try {
-        const call = this.myPeer.call(sanitizedId, streamToSend)
-        const video = document.createElement('video')
-        video.muted = true
-        this.peers.set(sanitizedId, { call, video })
-
-        call.on('stream', (userVideoStream) => {
-          if (userVideoStream.getVideoTracks().length > 0) {
-            this.addVideoStream(video, userVideoStream)
-          }
-          this.setupSpatialAudio(sanitizedId, userVideoStream)
-        })
-
-        call.on('close', () => {
-          this.deleteVideoStream(sanitizedId)
-        })
-        return true
-      } catch (err) {
-        console.warn('[WebRTC] Erro ao chamar peer', sanitizedId, err)
-        return false
-      }
+    if (this.peers.has(sanitizedId) || this.onCalledPeers.has(sanitizedId)) {
+      return true
     }
-    return true
-  }
 
-  // Setup Web Audio API node chain for 3D positional audio and acoustic depth
-  setupSpatialAudio(peerId: string, stream: MediaStream) {
-    if (stream.getAudioTracks().length === 0) return
-
-    const ctx = this.getAudioContext()
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {})
+    if (!this.isPeerOpen) {
+      this.pendingCalls.add(userId)
+      return false
     }
-    this.removeSpatialAudio(peerId)
 
     try {
-      // Cria elemento de áudio oculto e MUTADO para forçar o Chromium a decodificar o stream WebRTC sem tocar em 100% no master
-      const dummyAudio = new Audio()
-      dummyAudio.srcObject = stream
-      dummyAudio.muted = true // IMPEDE VAZAMENTO A 100% NO NAVEGADOR
-      dummyAudio.play().catch(() => {})
+      const streamToSend = this.myStream || this.createSilentAudioStream()
+      console.log('[WebRTC] Chamando peer:', sanitizedId)
+      const call = this.myPeer.call(sanitizedId, streamToSend)
+      if (!call) return false
 
-      const source = ctx.createMediaStreamSource(stream)
+      const video = document.createElement('video')
+      video.muted = true
+      this.peers.set(sanitizedId, { call, video })
 
-      // Acoustic filter for depth (muffles sound naturally as distance increases)
-      const filter = ctx.createBiquadFilter()
-      filter.type = 'lowpass'
-      filter.frequency.setValueAtTime(20000, ctx.currentTime)
+      call.on('stream', (userVideoStream) => {
+        if (userVideoStream.getVideoTracks().length > 0) {
+          this.addVideoStream(video, userVideoStream)
+        }
+        this.setupRemoteAudio(sanitizedId, userVideoStream)
+      })
 
-      // Stereo Panner for left/right positional audio
-      const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null
+      call.on('close', () => {
+        this.deleteVideoStream(sanitizedId)
+      })
 
-      // Gain node for physical distance attenuation (proximity)
-      const gain = ctx.createGain()
-      gain.gain.setValueAtTime(0, ctx.currentTime)
+      call.on('error', (err) => {
+        console.warn('[WebRTC] Call error com peer', sanitizedId, err)
+        this.deleteVideoStream(sanitizedId)
+      })
 
-      // Analyser node for detecting speech activity (halo indicator)
-      const analyser = ctx.createAnalyser()
-      analyser.fftSize = 256
-
-      // Connect graph: source -> filter -> analyser -> panner? -> gain -> speakers
-      source.connect(filter)
-      filter.connect(analyser)
-      if (panner) {
-        analyser.connect(panner)
-        panner.connect(gain)
-      } else {
-        analyser.connect(gain)
-      }
-      gain.connect(ctx.destination)
-
-      this.peerAudioNodes.set(peerId, { source, filter, panner, gain, dummyAudio, analyser })
-    } catch (e) {
-      console.warn('Failed to configure spatial audio for peer', peerId, e)
+      return true
+    } catch (err) {
+      console.warn('[WebRTC] Erro ao chamar peer', sanitizedId, err)
+      return false
     }
   }
 
-  // Smoothly update volume, stereo position and depth based on distance and coordinates
+  setupRemoteAudio(peerId: string, stream: MediaStream) {
+    if (stream.getAudioTracks().length === 0) return
+
+    this.removeRemoteAudio(peerId)
+
+    try {
+      const audio = new Audio()
+      audio.srcObject = stream
+      audio.autoplay = true
+      audio.volume = 0 // Inicia zerado até primeira atualização de distância
+
+      const playAudio = () => {
+        audio.play().catch(() => {
+          const unlock = () => {
+            audio.play().catch(() => {})
+            window.removeEventListener('click', unlock)
+            window.removeEventListener('keydown', unlock)
+          }
+          window.addEventListener('click', unlock)
+          window.addEventListener('keydown', unlock)
+        })
+      }
+      playAudio()
+
+      // Detector de fala do jogador remoto para acender o nome em verde
+      let analyser: AnalyserNode | undefined
+      try {
+        const ctx = this.getAudioContext()
+        const source = ctx.createMediaStreamSource(stream)
+        analyser = ctx.createAnalyser()
+        analyser.fftSize = 256
+        source.connect(analyser)
+        // Não conecta ao ctx.destination para evitar duplicidade de som
+      } catch (e) {
+        console.warn('[WebRTC] Não foi possível criar analyser remoto para peer', peerId, e)
+      }
+
+      this.peerAudios.set(peerId, { audio, analyser })
+      console.log('[WebRTC] Áudio remoto configurado com sucesso para peer:', peerId)
+    } catch (e) {
+      console.error('[WebRTC] Erro ao configurar áudio remoto para peer:', peerId, e)
+    }
+  }
+
   updateSpatialAudio(
     userId: string,
     myX: number,
@@ -320,50 +404,40 @@ export default class WebRTC {
     otherY: number
   ) {
     const sanitizedId = this.replaceInvalidId(userId)
-    const nodes = this.peerAudioNodes.get(sanitizedId)
-    if (!nodes || !this.audioContext) return
+    const entry = this.peerAudios.get(sanitizedId)
+    if (!entry) return
 
     const dx = otherX - myX
     const dy = otherY - myY
     const distance = Math.hypot(dx, dy)
 
-    const minDistance = 50
-    const maxDistance = 420
-    const now = this.audioContext.currentTime
+    const minDistance = 60
+    const maxHearingDistance = 450
 
-    // 1. Proximidade (Volume com atenuação física suave)
-    let targetGain = 0
+    let targetVolume = 0
     if (distance <= minDistance) {
-      targetGain = 1.0
-    } else if (distance < maxDistance) {
-      const factor = (distance - minDistance) / (maxDistance - minDistance)
-      // Cosine roll-off acústico para transição suave e realista
-      targetGain = Math.cos(factor * (Math.PI / 2))
+      targetVolume = 1.0
+    } else if (distance < maxHearingDistance) {
+      const factor = (distance - minDistance) / (maxHearingDistance - minDistance)
+      // Atenuação suave em cosseno
+      targetVolume = Math.cos(factor * (Math.PI / 2))
     } else {
-      targetGain = 0
-    }
-    nodes.gain.gain.setTargetAtTime(targetGain, now, 0.05)
-
-    // 2. Posicionamento Estéreo (Esquerda / Direita)
-    if (nodes.panner) {
-      const maxPanDistance = 280
-      const pan = Math.max(-1, Math.min(1, dx / maxPanDistance))
-      nodes.panner.pan.setTargetAtTime(pan, now, 0.05)
+      targetVolume = 0
     }
 
-    // 3. Profundidade Acústica (Atenuação de frequências com distância e profundidade do mapa)
-    const depthFactor = Math.min(1, distance / maxDistance)
-    const targetFreq = 20000 - depthFactor * 16800 // De 20.000 Hz até 3.200 Hz
-    nodes.filter.frequency.setTargetAtTime(targetFreq, now, 0.05)
+    if (entry.audio) {
+      entry.audio.volume = Math.max(0, Math.min(1, targetVolume))
+    }
 
-    // 4. Update remote peer speaking halo if analyser detected speech
-    if (nodes.analyser) {
-      const data = new Uint8Array(nodes.analyser.frequencyBinCount)
-      nodes.analyser.getByteFrequencyData(data)
+    // Atualiza nome em verde quando o outro jogador fala
+    if (entry.analyser) {
+      const data = new Uint8Array(entry.analyser.frequencyBinCount)
+      entry.analyser.getByteFrequencyData(data)
       let sum = 0
       for (let i = 0; i < data.length; i++) sum += data[i]
       const avg = sum / data.length
       const isSpeaking = avg > 8
+
       const game = phaserGame.scene.keys.game as any
       const other = game?.otherPlayerMap?.get(userId)
       if (other) {
@@ -372,46 +446,39 @@ export default class WebRTC {
     }
   }
 
-  removeSpatialAudio(peerId: string) {
-    const nodes = this.peerAudioNodes.get(peerId)
-    if (nodes) {
+  removeRemoteAudio(peerId: string) {
+    const entry = this.peerAudios.get(peerId)
+    if (entry) {
       try {
-        if (nodes.dummyAudio) {
-          nodes.dummyAudio.pause()
-          nodes.dummyAudio.srcObject = null
-          nodes.dummyAudio.remove()
-        }
-        nodes.source.disconnect()
-        nodes.filter.disconnect()
-        nodes.analyser?.disconnect()
-        nodes.panner?.disconnect()
-        nodes.gain.disconnect()
-      } catch (err) {
-        console.warn('Error disconnecting audio nodes:', err)
-      }
-      this.peerAudioNodes.delete(peerId)
+        entry.audio.pause()
+        entry.audio.srcObject = null
+        entry.audio.remove()
+        entry.analyser?.disconnect()
+      } catch (err) {}
+      this.peerAudios.delete(peerId)
     }
   }
 
-  // Toggle microphone mute
   toggleMute(): boolean {
-    const stream = this.myStream || this.audioStream
-    if (!stream) {
-      this.getUserMedia(true)
+    if (!this.myStream) {
+      this.ensureMicrophone()
       return false
     }
-    const audioTrack = stream.getAudioTracks()[0]
+    const audioTrack = this.myStream.getAudioTracks()[0]
     if (audioTrack) {
       audioTrack.enabled = !audioTrack.enabled
       const isMuted = !audioTrack.enabled
       store.dispatch(setMicMuted(isMuted))
       store.dispatch(setMicrophoneMuted(isMuted))
+      const game = phaserGame.scene.keys.game as any
+      if (isMuted) {
+        game?.myPlayer?.setSpeaking(false)
+      }
       return isMuted
     }
     return false
   }
 
-  // Toggle video on/off
   toggleVideo(): boolean {
     if (!this.myStream) {
       this.getUserMedia(true)
@@ -427,11 +494,9 @@ export default class WebRTC {
     return false
   }
 
-  // Method to add video stream to videoGrid div
   addVideoStream(video: HTMLVideoElement, stream: MediaStream) {
     video.srcObject = stream
     video.playsInline = true
-    // Impede o elemento HTML de áudio/vídeo de vazar som a 100% sem efeito espacial 3D
     video.muted = true
     video.addEventListener('loadedmetadata', () => {
       video.play().catch(() => {})
@@ -441,7 +506,6 @@ export default class WebRTC {
     }
   }
 
-  // Method to remove video stream (when we are the host of the call)
   deleteVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
     if (this.peers.has(sanitizedId)) {
@@ -450,10 +514,9 @@ export default class WebRTC {
       peer?.video.remove()
       this.peers.delete(sanitizedId)
     }
-    this.removeSpatialAudio(sanitizedId)
+    this.removeRemoteAudio(sanitizedId)
   }
 
-  // Method to remove video stream (when we are the guest of the call)
   deleteOnCalledVideoStream(userId: string) {
     const sanitizedId = this.replaceInvalidId(userId)
     if (this.onCalledPeers.has(sanitizedId)) {
@@ -462,6 +525,6 @@ export default class WebRTC {
       onCalledPeer?.video.remove()
       this.onCalledPeers.delete(sanitizedId)
     }
-    this.removeSpatialAudio(sanitizedId)
+    this.removeRemoteAudio(sanitizedId)
   }
 }
