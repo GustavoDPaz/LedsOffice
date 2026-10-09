@@ -130,10 +130,11 @@ export default class Game extends Phaser.Scene {
           l.setDepth(20)
         } else if (lower.includes('pc')) {
           l.setDepth(30)
-        } else if (lower.includes('quadro') || lower.includes('whiteboard')) {
-          l.setDepth(40)
         } else if (isWall) {
           l.setDepth(50)
+        } else if (lower.includes('quadro') || lower.includes('whiteboard')) {
+          // Quadro branco acima de Wall (50) para ser visível na parede
+          l.setDepth(55)
         } else if (isObjectsCollide) {
           // Objects_collide acima de Wall (50) e Furniture (20)
           l.setDepth(60)
