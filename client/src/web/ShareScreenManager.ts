@@ -1,14 +1,21 @@
 import Peer from 'peerjs'
 import store from '../stores'
-import { setMyStream, addVideoStream, removeVideoStream } from '../stores/ComputerStore'
+import {
+  setMyStream,
+  setPresenterId,
+  addVideoStream,
+  removeVideoStream,
+} from '../stores/ComputerStore'
 import phaserGame from '../PhaserGame'
 import Game from '../scenes/Game'
+import { sanitizeId } from '../util'
 
 export default class ShareScreenManager {
   private myPeer: Peer
   myStream?: MediaStream
   private isPeerOpen = false
   private activeCalls = new Map<string, Peer.MediaConnection>()
+  private activeDataConns = new Map<string, Peer.DataConnection>()
   private retryInterval?: any
 
   constructor(private userId: string) {
@@ -16,27 +23,70 @@ export default class ShareScreenManager {
     this.myPeer = new Peer(sanatizedId)
 
     this.myPeer.on('open', (id) => {
-      console.log('ShareScreen PeerJS connected with ID:', id)
+      console.log('[ShareScreen] PeerJS connected with ID:', id)
       this.isPeerOpen = true
       this.connectToExistingUsers()
     })
 
     this.myPeer.on('error', (err: any) => {
-      console.warn('ShareScreenWebRTC error:', err.type, err)
-      // When a remote peer is not yet available, remove it so retry can try again
+      console.warn('[ShareScreen] PeerJS error:', err.type, err)
       if (err.type === 'peer-unavailable') {
         const errorMsg = err.message || ''
         const match = errorMsg.match(/peer\s+([^\s]+)/i)
         if (match && match[1]) {
           this.activeCalls.delete(match[1])
+          this.activeDataConns.delete(match[1])
         }
       }
     })
 
-    this.myPeer.on('call', (call) => {
-      console.log('Receiving screen share call from:', call.peer)
+    // Listen for incoming DataConnections (signaling & presenter status)
+    this.myPeer.on('connection', (conn) => {
+      this.activeDataConns.set(conn.peer, conn)
 
-      // If I am sharing my screen, answer with my stream. Otherwise answer empty.
+      conn.on('data', (data: any) => {
+        if (!data || typeof data !== 'object') return
+
+        if (data.type === 'CHECK_PRESENTER') {
+          // A viewer joined and is asking if anyone is presenting
+          if (this.myStream) {
+            conn.send({
+              type: 'PRESENTER_STATUS',
+              isPresenter: true,
+              presenterId: this.userId,
+            })
+            // Immediately send our screen share call to this viewer
+            if (data.from) {
+              this.callUser(data.from)
+            }
+          } else {
+            conn.send({
+              type: 'PRESENTER_STATUS',
+              isPresenter: false,
+            })
+          }
+        } else if (data.type === 'PRESENTER_STATUS') {
+          if (data.isPresenter && data.presenterId) {
+            store.dispatch(setPresenterId(data.presenterId))
+          }
+        } else if (data.type === 'STOP_SCREEN_SHARE') {
+          store.dispatch(setPresenterId(null))
+          if (data.presenterId) {
+            store.dispatch(removeVideoStream(data.presenterId))
+          }
+        }
+      })
+
+      conn.on('close', () => {
+        this.activeDataConns.delete(conn.peer)
+      })
+    })
+
+    // Listen for incoming MediaConnection calls (receiving screen share)
+    this.myPeer.on('call', (call) => {
+      console.log('[ShareScreen] Receiving call from:', call.peer)
+
+      // If I am sharing, answer with my stream. Otherwise answer to receive.
       if (this.myStream) {
         call.answer(this.myStream)
       } else {
@@ -46,18 +96,21 @@ export default class ShareScreenManager {
       this.activeCalls.set(call.peer, call)
 
       call.on('stream', (userVideoStream) => {
-        console.log('Got remote screen stream from:', call.peer)
-        store.dispatch(addVideoStream({ id: call.peer, call, stream: userVideoStream }))
+        console.log('[ShareScreen] Got remote screen stream from:', call.peer)
+        if (userVideoStream.getVideoTracks().length > 0) {
+          store.dispatch(addVideoStream({ id: call.peer, call, stream: userVideoStream }))
+          store.dispatch(setPresenterId(call.peer))
+        }
       })
 
       call.on('close', () => {
-        console.log('Screen share call closed:', call.peer)
+        console.log('[ShareScreen] Screen share call closed:', call.peer)
         this.activeCalls.delete(call.peer)
         store.dispatch(removeVideoStream(call.peer))
       })
 
       call.on('error', (err) => {
-        console.warn('Screen share call error:', call.peer, err)
+        console.warn('[ShareScreen] Screen share call error:', call.peer, err)
         this.activeCalls.delete(call.peer)
         store.dispatch(removeVideoStream(call.peer))
       })
@@ -71,6 +124,9 @@ export default class ShareScreenManager {
     } else if (this.myPeer.disconnected) {
       this.myPeer.reconnect()
     }
+    if (this.isPeerOpen) {
+      this.connectToExistingUsers()
+    }
   }
 
   onClose() {
@@ -79,6 +135,14 @@ export default class ShareScreenManager {
       clearInterval(this.retryInterval)
       this.retryInterval = undefined
     }
+
+    for (const conn of this.activeDataConns.values()) {
+      try {
+        conn.close()
+      } catch (e) {}
+    }
+    this.activeDataConns.clear()
+
     for (const call of this.activeCalls.values()) {
       try {
         call.close()
@@ -91,14 +155,14 @@ export default class ShareScreenManager {
     } catch (e) {}
   }
 
-  // PeerJS throws invalid_id error if it contains some characters such as that colyseus generates.
-  // Also for screen sharing ID add a `-ss` at the end.
   private makeId(id: string) {
-    return `${id.replace(/[^0-9a-z]/gi, 'G')}-ss`
+    return `${sanitizeId(id)}-ss`
   }
 
   startScreenShare() {
-    if (store.getState().computer.peerStreams.size > 0) {
+    const computerState = store.getState().computer
+    if (computerState.peerStreams.size > 0 || computerState.presenterId) {
+      console.warn('[ShareScreen] Another user is already presenting')
       return
     }
 
@@ -118,11 +182,12 @@ export default class ShareScreenManager {
 
         this.myStream = stream
         store.dispatch(setMyStream(stream))
+        store.dispatch(setPresenterId(this.userId))
 
         // Immediately call all existing users at the computer
         this.broadcastScreenShare()
 
-        // Start a heartbeat retry loop to catch any users connecting with latency
+        // Heartbeat retry loop to ensure any newly arriving viewer receives the stream
         if (this.retryInterval) clearInterval(this.retryInterval)
         this.retryInterval = setInterval(() => {
           if (!this.myStream) {
@@ -130,7 +195,7 @@ export default class ShareScreenManager {
             return
           }
           this.broadcastScreenShare()
-        }, 2000)
+        }, 1500)
       })
       .catch((err) => {
         console.warn('Error starting display media:', err)
@@ -140,23 +205,7 @@ export default class ShareScreenManager {
   private broadcastScreenShare() {
     const game = phaserGame.scene.keys.game as Game | undefined
     const computerId = store.getState().computer.computerId
-    if (!game || !computerId) return
-
-    const computerItem = game.computerMap.get(computerId)
-    if (computerItem) {
-      for (const userId of computerItem.currentUsers) {
-        if (userId !== this.userId) {
-          this.onUserJoined(userId)
-        }
-      }
-    }
-  }
-
-  // When my peer opens, connect to any user already present at this computer
-  private connectToExistingUsers() {
-    const game = phaserGame.scene.keys.game as Game | undefined
-    const computerId = store.getState().computer.computerId
-    if (!game || !computerId) return
+    if (!game || !computerId || !this.myStream) return
 
     const computerItem = game.computerMap.get(computerId)
     if (computerItem) {
@@ -168,10 +217,71 @@ export default class ShareScreenManager {
     }
   }
 
+  // When my peer opens, query or connect to users present at this computer
+  private connectToExistingUsers() {
+    const game = phaserGame.scene.keys.game as Game | undefined
+    const computerId = store.getState().computer.computerId
+    if (!game || !computerId) return
+
+    const computerItem = game.computerMap.get(computerId)
+    if (computerItem) {
+      for (const userId of computerItem.currentUsers) {
+        if (userId !== this.userId) {
+          if (this.myStream) {
+            this.callUser(userId)
+          } else {
+            this.queryUser(userId)
+          }
+        }
+      }
+    }
+  }
+
+  // Query a user to check if they are presenting
+  private queryUser(userId: string) {
+    if (!this.isPeerOpen) return
+    const targetPeerId = this.makeId(userId)
+
+    try {
+      const conn = this.myPeer.connect(targetPeerId)
+      if (!conn) return
+
+      this.activeDataConns.set(targetPeerId, conn)
+
+      conn.on('open', () => {
+        conn.send({
+          type: 'CHECK_PRESENTER',
+          from: this.userId,
+        })
+      })
+
+      conn.on('data', (data: any) => {
+        if (data?.type === 'PRESENTER_STATUS' && data.isPresenter && data.presenterId) {
+          store.dispatch(setPresenterId(data.presenterId))
+        }
+      })
+
+      conn.on('close', () => {
+        this.activeDataConns.delete(targetPeerId)
+      })
+    } catch (e) {
+      console.warn('[ShareScreen] Error querying user:', targetPeerId, e)
+    }
+  }
+
   stopScreenShare(shouldDispatch = true) {
     if (this.retryInterval) {
       clearInterval(this.retryInterval)
       this.retryInterval = undefined
+    }
+
+    // Broadcast STOP signal via open data connections
+    for (const conn of this.activeDataConns.values()) {
+      try {
+        if (conn.open) {
+          conn.send({ type: 'STOP_SCREEN_SHARE', presenterId: this.userId })
+        }
+      } catch (e) {}
     }
 
     this.myStream?.getTracks().forEach((track) => track.stop())
@@ -186,6 +296,7 @@ export default class ShareScreenManager {
 
     if (shouldDispatch) {
       store.dispatch(setMyStream(null))
+      store.dispatch(setPresenterId(null))
       const game = phaserGame.scene.keys.game as Game | undefined
       const computerId = store.getState().computer.computerId
       if (game && computerId) {
@@ -196,56 +307,91 @@ export default class ShareScreenManager {
 
   onUserJoined(userId: string) {
     if (userId === this.userId) return
-    this.callUser(userId)
+
+    if (this.myStream) {
+      this.callUser(userId)
+    } else {
+      this.queryUser(userId)
+    }
   }
 
   private callUser(userId: string) {
-    if (!this.isPeerOpen) return
+    if (!this.isPeerOpen || !this.myStream) return
 
-    const sanatizedId = this.makeId(userId)
-    if (this.activeCalls.has(sanatizedId)) return
+    const targetPeerId = this.makeId(userId)
+
+    // Send instant data message that we are presenting
+    try {
+      let conn = this.activeDataConns.get(targetPeerId)
+      if (!conn || !conn.open) {
+        conn = this.myPeer.connect(targetPeerId)
+        this.activeDataConns.set(targetPeerId, conn)
+        conn.on('open', () => {
+          conn?.send({
+            type: 'PRESENTER_STATUS',
+            isPresenter: true,
+            presenterId: this.userId,
+          })
+        })
+      } else {
+        conn.send({
+          type: 'PRESENTER_STATUS',
+          isPresenter: true,
+          presenterId: this.userId,
+        })
+      }
+    } catch (e) {}
+
+    // Check if we already have an active media call
+    const existingCall = this.activeCalls.get(targetPeerId)
+    if (existingCall && existingCall.open) {
+      return
+    }
 
     try {
-      // Call remote peer with our stream if we are sharing, or with empty stream if we are listening
-      const call = this.myStream
-        ? this.myPeer.call(sanatizedId, this.myStream)
-        : this.myPeer.call(sanatizedId, new MediaStream())
-
+      console.log('[ShareScreen] Calling user with display stream:', targetPeerId)
+      const call = this.myPeer.call(targetPeerId, this.myStream)
       if (!call) return
 
-      this.activeCalls.set(sanatizedId, call)
-
-      call.on('stream', (userVideoStream) => {
-        console.log('Received remote stream from called peer:', sanatizedId)
-        store.dispatch(addVideoStream({ id: sanatizedId, call, stream: userVideoStream }))
-      })
+      this.activeCalls.set(targetPeerId, call)
 
       call.on('close', () => {
-        this.activeCalls.delete(sanatizedId)
-        store.dispatch(removeVideoStream(sanatizedId))
+        this.activeCalls.delete(targetPeerId)
       })
 
       call.on('error', (err) => {
-        console.warn('Call error with peer:', sanatizedId, err)
-        this.activeCalls.delete(sanatizedId)
-        store.dispatch(removeVideoStream(sanatizedId))
+        console.warn('[ShareScreen] Call error with peer:', targetPeerId, err)
+        this.activeCalls.delete(targetPeerId)
       })
     } catch (e) {
-      console.warn('Failed to call user:', sanatizedId, e)
+      console.warn('[ShareScreen] Failed to call user:', targetPeerId, e)
     }
   }
 
   onUserLeft(userId: string) {
     if (userId === this.userId) return
 
-    const sanatizedId = this.makeId(userId)
-    const call = this.activeCalls.get(sanatizedId)
+    const targetPeerId = this.makeId(userId)
+    const call = this.activeCalls.get(targetPeerId)
     if (call) {
       try {
         call.close()
       } catch (e) {}
-      this.activeCalls.delete(sanatizedId)
+      this.activeCalls.delete(targetPeerId)
     }
-    store.dispatch(removeVideoStream(sanatizedId))
+
+    const conn = this.activeDataConns.get(targetPeerId)
+    if (conn) {
+      try {
+        conn.close()
+      } catch (e) {}
+      this.activeDataConns.delete(targetPeerId)
+    }
+
+    store.dispatch(removeVideoStream(targetPeerId))
+    const currentPresenter = store.getState().computer.presenterId
+    if (currentPresenter === sanitizeId(userId) || currentPresenter === sanitizeId(targetPeerId)) {
+      store.dispatch(setPresenterId(null))
+    }
   }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import styled from 'styled-components'
 import Button from '@mui/material/Button'
 import IconButton from '@mui/material/IconButton'
@@ -7,9 +7,11 @@ import ScreenShareIcon from '@mui/icons-material/ScreenShare'
 import StopScreenShareIcon from '@mui/icons-material/StopScreenShare'
 import DesktopWindowsIcon from '@mui/icons-material/DesktopWindows'
 import LiveTvIcon from '@mui/icons-material/LiveTv'
+import CircularProgress from '@mui/material/CircularProgress'
 
 import { useAppSelector, useAppDispatch } from '../hooks'
 import { closeComputerDialog } from '../stores/ComputerStore'
+import { sanitizeId } from '../util'
 
 import Video from './Video'
 
@@ -160,6 +162,17 @@ const StageVideo = styled.div`
   }
 `
 
+const LoadingState = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #38bdf8;
+  font-size: 15px;
+  font-weight: 500;
+`
+
 const EmptyState = styled.div`
   display: flex;
   flex-direction: column;
@@ -207,9 +220,12 @@ const EmptyState = styled.div`
 export default function ComputerDialog() {
   const dispatch = useAppDispatch()
   const playerNameMap = useAppSelector((state) => state.user.playerNameMap)
+  const mySessionId = useAppSelector((state) => state.user.sessionId)
   const shareScreenManager = useAppSelector((state) => state.computer.shareScreenManager)
   const myStream = useAppSelector((state) => state.computer.myStream)
   const peerStreams = useAppSelector((state) => state.computer.peerStreams)
+  const presenterId = useAppSelector((state) => state.computer.presenterId)
+  const [isStarting, setIsStarting] = useState(false)
 
   // Sair da tela de transmissão ao pressionar ESC
   useEffect(() => {
@@ -226,16 +242,35 @@ export default function ComputerDialog() {
     }
   }, [dispatch])
 
+  const mySanitizedId = mySessionId ? sanitizeId(mySessionId) : null
   const isSharingMyScreen = Boolean(myStream)
   const peerEntries = [...peerStreams.entries()]
-  const hasPeerSharing = peerEntries.length > 0
 
-  // Identifica o apresentador quando alguém estiver transmitindo
-  const activePeer = hasPeerSharing ? peerEntries[0] : null
-  const presenterId = activePeer ? activePeer[0] : null
-  const presenterName = presenterId
-    ? playerNameMap.get(presenterId) || 'Colega'
-    : 'Apresentador'
+  // Outra pessoa está transmitindo se houver streams remotos ou se presenterId for de outro jogador
+  const hasRemotePresenter = Boolean(
+    peerEntries.length > 0 ||
+      (presenterId && presenterId !== mySanitizedId)
+  )
+
+  // Encontra o nome do apresentador
+  let presenterName = 'Apresentador'
+  if (peerEntries.length > 0) {
+    const [id] = peerEntries[0]
+    presenterName = playerNameMap.get(id) || playerNameMap.get(sanitizeId(id)) || 'Colega'
+  } else if (presenterId) {
+    presenterName =
+      playerNameMap.get(presenterId) || playerNameMap.get(sanitizeId(presenterId)) || 'Colega'
+  }
+
+  const handleStartShare = async () => {
+    if (hasRemotePresenter || isSharingMyScreen || isStarting) return
+    setIsStarting(true)
+    try {
+      await shareScreenManager?.startScreenShare()
+    } finally {
+      setIsStarting(false)
+    }
+  }
 
   return (
     <Backdrop>
@@ -259,8 +294,8 @@ export default function ComputerDialog() {
               </Button>
             )}
 
-            {/* Se outra pessoa está transmitindo: apenas assistir, NÃO pode transmitir */}
-            {hasPeerSharing && !isSharingMyScreen && (
+            {/* Se outra pessoa está transmitindo: modo espectador garantido (sem botão de compartilhar) */}
+            {hasRemotePresenter && !isSharingMyScreen && (
               <ViewerBadge>
                 <div className="live-dot" />
                 <LiveTvIcon fontSize="small" />
@@ -271,11 +306,12 @@ export default function ComputerDialog() {
             )}
 
             {/* Se ninguém está transmitindo: botão para iniciar transmissão */}
-            {!hasPeerSharing && !isSharingMyScreen && (
+            {!hasRemotePresenter && !isSharingMyScreen && (
               <Button
                 variant="contained"
                 startIcon={<ScreenShareIcon />}
-                onClick={() => shareScreenManager?.startScreenShare()}
+                onClick={handleStartShare}
+                disabled={isStarting}
                 style={{
                   backgroundColor: '#10b981',
                   color: '#ffffff',
@@ -286,7 +322,7 @@ export default function ComputerDialog() {
                   padding: '6px 16px',
                 }}
               >
-                Share Screen
+                {isStarting ? 'Iniciando...' : 'Share Screen'}
               </Button>
             )}
           </div>
@@ -307,24 +343,32 @@ export default function ComputerDialog() {
         </div>
 
         <StageArea>
-          {/* Se eu estiver transmitindo, mostra minha tela */}
+          {/* Se eu estiver transmitindo, mostra minha tela (com áudio mutado localmente para evitar eco) */}
           {isSharingMyScreen && myStream && (
             <StageVideo>
-              <Video srcObject={myStream} autoPlay />
+              <Video srcObject={myStream} autoPlay muted />
               <div className="player-tag">Sua Transmissão</div>
             </StageVideo>
           )}
 
-          {/* Se outra pessoa estiver transmitindo, mostra a tela dela em modo de exibição total */}
-          {!isSharingMyScreen && hasPeerSharing && activePeer && (
+          {/* Se outra pessoa estiver transmitindo e a transmissão já carregou */}
+          {!isSharingMyScreen && hasRemotePresenter && peerEntries.length > 0 && (
             <StageVideo>
-              <Video srcObject={activePeer[1].stream} autoPlay />
+              <Video srcObject={peerEntries[0][1].stream} autoPlay />
               <div className="player-tag">{presenterName}</div>
             </StageVideo>
           )}
 
-          {/* Se ninguém estiver transmitindo, mostra o estado vazio informativo */}
-          {!isSharingMyScreen && !hasPeerSharing && (
+          {/* Se outra pessoa estiver transmitindo e o stream ainda estiver conectando via PeerJS */}
+          {!isSharingMyScreen && hasRemotePresenter && peerEntries.length === 0 && (
+            <LoadingState>
+              <CircularProgress size={36} style={{ color: '#38bdf8' }} />
+              <span>Conectando à transmissão de {presenterName}...</span>
+            </LoadingState>
+          )}
+
+          {/* Se ninguém estiver transmitindo, mostra o estado vazio */}
+          {!isSharingMyScreen && !hasRemotePresenter && (
             <EmptyState>
               <DesktopWindowsIcon className="screen-icon" />
               <h3>Nenhuma tela sendo transmitida no momento</h3>
