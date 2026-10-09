@@ -3,6 +3,7 @@ import MyPlayer from './MyPlayer'
 import { PlayerBehavior } from '../../../types/PlayerBehavior'
 import Item from '../items/Item'
 import { NavKeys } from '../../../types/KeyboardState'
+
 export default class PlayerSelector extends Phaser.GameObjects.Zone {
   selectedItem?: Item
 
@@ -22,7 +23,7 @@ export default class PlayerSelector extends Phaser.GameObjects.Zone {
       return
     }
 
-    // update player selection box position so that it's always in front of the player
+    // Atualiza a posição da caixa de seleção em frente ao jogador, mesmo quando parado
     const { x, y } = player
     let joystickLeft = false
     let joystickRight = false
@@ -34,18 +35,40 @@ export default class PlayerSelector extends Phaser.GameObjects.Zone {
       joystickUp = player.joystickMovement?.direction.up
       joystickDown = player.joystickMovement?.direction.down
     }
+
+    let dir = 'down'
     if (cursors.left?.isDown || cursors.A?.isDown || joystickLeft) {
-      this.setPosition(x - 32, y)
+      dir = 'left'
     } else if (cursors.right?.isDown || cursors.D?.isDown || joystickRight) {
-      this.setPosition(x + 32, y)
+      dir = 'right'
     } else if (cursors.up?.isDown || cursors.W?.isDown || joystickUp) {
-      this.setPosition(x, y - 32)
+      dir = 'up'
     } else if (cursors.down?.isDown || cursors.S?.isDown || joystickDown) {
-      this.setPosition(x, y + 32)
+      dir = 'down'
+    } else {
+      // Quando parado, mantém a direção que o personagem está olhando
+      const animKey = player.anims.currentAnim?.key
+      if (animKey) {
+        const parts = animKey.split('_')
+        if (parts.length >= 3) {
+          dir = parts[2]
+        }
+      }
     }
 
-    // while currently selecting an item,
-    // if the selector and selection item stop overlapping, clear the dialog box and selected item
+    const offset = 24
+    if (dir === 'left') {
+      this.setPosition(x - offset, y)
+    } else if (dir === 'right') {
+      this.setPosition(x + offset, y)
+    } else if (dir === 'up') {
+      this.setPosition(x, y - offset)
+    } else if (dir === 'down') {
+      this.setPosition(x, y + offset)
+    }
+
+    // Enquanto um item estiver selecionado,
+    // se o seletor deixar de sobrepor o item, limpa a caixa de diálogo
     if (this.selectedItem) {
       if (!this.scene.physics.overlap(this, this.selectedItem)) {
         this.selectedItem.clearDialogBox()

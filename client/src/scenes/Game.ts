@@ -149,7 +149,7 @@ export default class Game extends Phaser.Scene {
     const spawnX = this.map.width > 50 ? 1360 : 705
     const spawnY = this.map.width > 50 ? 272 : 500
     this.myPlayer = this.add.myPlayer(spawnX, spawnY, 'adam', this.network.mySessionId)
-    this.playerSelector = new PlayerSelector(this, 0, 0, 16, 16)
+    this.playerSelector = new PlayerSelector(this, 0, 0, 28, 28)
 
     // import chair objects from Tiled map to Phaser
     const chairs = this.physics.add.staticGroup({ classType: Chair })
@@ -161,6 +161,11 @@ export default class Game extends Phaser.Scene {
           item.setAlpha(0)
           if (chairObj.properties && chairObj.properties[0]) {
             item.itemDirection = chairObj.properties[0].value
+          }
+          const body = item.body as Phaser.Physics.Arcade.StaticBody
+          if (body) {
+            body.setSize(44, 44)
+            body.setOffset(item.width * 0.5 - 22, item.height * 0.5 - 22)
           }
         }
       })
@@ -186,6 +191,11 @@ export default class Game extends Phaser.Scene {
                 item.setAlpha(0)
                 item.setDepth(actualY)
                 item.itemDirection = dir
+                const body = item.body as Phaser.Physics.Arcade.StaticBody
+                if (body) {
+                  body.setSize(44, 44)
+                  body.setOffset(item.width * 0.5 - 22, item.height * 0.5 - 22)
+                }
               }
             }
           }
@@ -298,11 +308,31 @@ export default class Game extends Phaser.Scene {
           currentItem.itemType === ItemType.CHAIR &&
           selectionItem.itemType === ItemType.COMPUTER
         ) {
-          // allow selecting computer while sitting
+          // Permite usar o computador quando sentado na cadeira
         } else if (currentItem.itemType === ItemType.COMPUTER) {
           return
         }
       } else {
+        // Enquanto o jogador estiver em pé, a CADEIRA TEM PRIORIDADE ABSOLUTA sobre o computador
+        // Isso impede que o computador compita ou roube o diálogo "Press E to sit"
+        if (
+          currentItem.itemType === ItemType.CHAIR &&
+          selectionItem.itemType === ItemType.COMPUTER
+        ) {
+          return // Mantém a cadeira selecionada, ignora o computador
+        }
+
+        if (
+          currentItem.itemType === ItemType.COMPUTER &&
+          selectionItem.itemType === ItemType.CHAIR
+        ) {
+          // Se o seletor estava no computador mas encontrou a cadeira, dá foco à cadeira
+          currentItem.clearDialogBox()
+          playerSelector.selectedItem = selectionItem
+          selectionItem.onOverlapDialog()
+          return
+        }
+
         if (currentItem.depth >= selectionItem.depth && currentItem.itemType === selectionItem.itemType) {
           return
         }
