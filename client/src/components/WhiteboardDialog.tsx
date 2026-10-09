@@ -31,8 +31,15 @@ const Wrapper = styled.div`
 
   .close {
     position: absolute;
-    top: 0px;
-    right: 0px;
+    top: 8px;
+    right: 8px;
+    z-index: 100;
+    color: #eee;
+    background: rgba(0, 0, 0, 0.4);
+    &:hover {
+      background: rgba(0, 0, 0, 0.8);
+      color: #ff5252;
+    }
   }
 `
 

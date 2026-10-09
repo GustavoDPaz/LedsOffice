@@ -21,14 +21,13 @@ import { ItemType } from '../../../types/Items'
 import store from '../stores'
 import { setFocused, setShowChat } from '../stores/ChatStore'
 import { NavKeys, Keyboard } from '../../../types/KeyboardState'
-import { proximityAudio } from '../web/ProximityAudio'
-import { phaserEvents } from '../events/EventCenter'
 
 export default class Game extends Phaser.Scene {
   network!: Network
   private cursors!: NavKeys
   private keyE!: Phaser.Input.Keyboard.Key
   private keyR!: Phaser.Input.Keyboard.Key
+  private keyM!: Phaser.Input.Keyboard.Key
   private map!: Phaser.Tilemaps.Tilemap
   myPlayer!: MyPlayer
   private playerSelector!: Phaser.GameObjects.Zone
@@ -36,7 +35,6 @@ export default class Game extends Phaser.Scene {
   private otherPlayerMap = new Map<string, OtherPlayer>()
   computerMap = new Map<string, Computer>()
   private whiteboardMap = new Map<string, Whiteboard>()
-  private lastProximityEmit = 0
 
   constructor() {
     super('game')
@@ -51,6 +49,10 @@ export default class Game extends Phaser.Scene {
     // maybe we can have a dedicated method for adding keys if more keys are needed in the future
     this.keyE = this.input.keyboard.addKey('E')
     this.keyR = this.input.keyboard.addKey('R')
+    this.keyM = this.input.keyboard.addKey('M')
+    this.keyM.on('down', () => {
+      this.network.webRTC?.toggleMute()
+    })
     this.input.keyboard.disableGlobalCapture()
     this.input.keyboard.on('keydown-ENTER', (event) => {
       store.dispatch(setShowChat(true))
@@ -289,70 +291,17 @@ export default class Game extends Phaser.Scene {
       this.playerSelector.update(this.myPlayer, this.cursors)
       this.myPlayer.update(this.playerSelector, this.cursors, this.keyE, this.keyR, this.network)
 
-      // Atualiza posição do rádio ambiente de teste no Lounge
-      proximityAudio.updateRadioPosition(this.myPlayer.x, this.myPlayer.y)
-
-      const nearbyList: {
-        id: string
-        name: string
-        distance: number
-        inZone: boolean
-      }[] = []
-
-      // Atualiza espacialização e alcance de proximidade para todos os colegas
-      this.otherPlayerMap.forEach((otherPlayer, id) => {
-        const inConferenceRoom =
-          this.myPlayer.x < 610 &&
-          this.myPlayer.y > 515 &&
-          otherPlayer.x < 610 &&
-          otherPlayer.y > 515
-
-        const dx = otherPlayer.x - this.myPlayer.x
-        const dy = otherPlayer.y - this.myPlayer.y
-        const dist = Math.sqrt(dx * dx + dy * dy)
-
-        // Atualiza áudio 3D (ganho e panner estéreo suave)
-        proximityAudio.updateSourcePosition(
-          id,
-          otherPlayer.x,
-          otherPlayer.y,
-          this.myPlayer.x,
-          this.myPlayer.y,
-          inConferenceRoom
-        )
-
-        const sanitizedId = otherPlayer.playerId.replace(/[^0-9a-z]/gi, 'G')
-        if (sanitizedId !== id) {
-          proximityAudio.updateSourcePosition(
-            sanitizedId,
-            otherPlayer.x,
-            otherPlayer.y,
+      const webRTC = this.network.webRTC
+      if (webRTC) {
+        this.otherPlayerMap.forEach((otherPlayer, id) => {
+          webRTC.updateSpatialAudio(
+            id,
             this.myPlayer.x,
             this.myPlayer.y,
-            inConferenceRoom
+            otherPlayer.x,
+            otherPlayer.y
           )
-        }
-
-        if (dist <= 360 || inConferenceRoom) {
-          nearbyList.push({
-            id,
-            name: otherPlayer.playerName.text || 'Colega',
-            distance: Math.round(dist),
-            inZone: inConferenceRoom,
-          })
-        }
-
-        if (this.network?.webRTC) {
-          otherPlayer.checkProximity(this.myPlayer, this.network.webRTC)
-        }
-      })
-
-      // Emite lista para o componente Radar de Proximidade da interface
-      if (!this.lastProximityEmit || t - this.lastProximityEmit > 200) {
-        this.lastProximityEmit = t
-        phaserEvents.emit('proximity-nearby-update', nearbyList, {
-          x: this.myPlayer.x,
-          y: this.myPlayer.y,
+          otherPlayer.checkProximity(this.myPlayer, webRTC)
         })
       }
     }

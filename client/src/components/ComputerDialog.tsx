@@ -88,7 +88,7 @@ const ViewerBadge = styled.div`
   align-items: center;
   gap: 8px;
   background: rgba(14, 165, 233, 0.15);
-  border: 1px solid rgba(14, 165, 233, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.3);
   color: #38bdf8;
   padding: 6px 14px;
   border-radius: 8px;
@@ -342,4 +342,3 @@ export default function ComputerDialog() {
     </Backdrop>
   )
 }
-

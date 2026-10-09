@@ -20,6 +20,8 @@ export const userSlice = createSlice({
     microphoneMuted: false,
     playerNameMap: new Map<string, string>(),
     showJoystick: window.innerWidth < 650,
+    micMuted: false,
+    videoMuted: false,
   },
   reducers: {
     toggleBackgroundMode: (state) => {
@@ -50,6 +52,14 @@ export const userSlice = createSlice({
     },
     setMicrophoneMuted: (state, action: PayloadAction<boolean>) => {
       state.microphoneMuted = action.payload
+      state.micMuted = action.payload
+    },
+    setMicMuted: (state, action: PayloadAction<boolean>) => {
+      state.micMuted = action.payload
+      state.microphoneMuted = action.payload
+    },
+    setVideoMuted: (state, action: PayloadAction<boolean>) => {
+      state.videoMuted = action.payload
     },
   },
 })
@@ -63,6 +73,8 @@ export const {
   removePlayerNameMap,
   setShowJoystick,
   setMicrophoneMuted,
+  setMicMuted,
+  setVideoMuted,
 } = userSlice.actions
 
 export default userSlice.reducer

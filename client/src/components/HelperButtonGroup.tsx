@@ -116,7 +116,9 @@ export default function HelperButtonGroup() {
   const roomId = useAppSelector((state) => state.room.roomId)
   const roomName = useAppSelector((state) => state.room.roomName)
   const roomDescription = useAppSelector((state) => state.room.roomDescription)
-  const microphoneMuted = useAppSelector((state) => state.user.microphoneMuted)
+  const microphoneMuted = useAppSelector(
+    (state) => state.user.microphoneMuted || state.user.micMuted
+  )
   const dispatch = useAppDispatch()
 
   useEffect(() => {
@@ -184,6 +186,9 @@ export default function HelperButtonGroup() {
                 <strong>W, A, S, D or arrow keys</strong> to move
               </li>
               <li>
+                <strong>M</strong> to mute / unmute microphone
+              </li>
+              <li>
                 <strong>E</strong> to sit down (when facing a chair)
               </li>
               <li>
@@ -193,15 +198,12 @@ export default function HelperButtonGroup() {
                 <strong>Enter</strong> to open chat
               </li>
               <li>
-                <strong>M</strong> to mute/unmute microphone
-              </li>
-              <li>
                 <strong>ESC</strong> to close chat / screen share
               </li>
             </ul>
             <p className="tip">
               <LightbulbIcon />
-              Microfone espacial com profundidade por proximidade ativado!
+              Áudio espacial 3D com proximidade e profundidade ativado!
             </p>
           </Wrapper>
         )}
