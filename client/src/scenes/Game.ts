@@ -94,48 +94,53 @@ export default class Game extends Phaser.Scene {
       groundLayer.setCollisionByProperty({ collides: true })
     }
 
-    const customTileLayers = [
-      'Wall',
-      'Wall_nocollide',
-      'Furniture',
-      'Furniture_seat',
-      'Objects_collide',
-      'sofa',
-      'PCs',
-      'quadroBranco',
-    ]
     const collidableTileLayers: Phaser.Tilemaps.TilemapLayer[] = []
-    customTileLayers.forEach((layerName) => {
-      if (this.map.getLayer(layerName)) {
-        const l = this.map.createLayer(layerName, tilesetList)
-        if (l) {
-          if (
-            layerName === 'Wall' ||
-            layerName === 'Objects_collide' ||
-            layerName === 'Furniture'
-          ) {
-            l.setCollisionByExclusion([-1, 0])
-            collidableTileLayers.push(l)
-          }
-          if (layerName === 'Furniture_seat') {
-            l.setDepth(10)
-          } else if (layerName === 'sofa') {
-            l.setDepth(15)
-          } else if (layerName === 'Furniture') {
-            l.setDepth(20)
-          } else if (layerName === 'PCs') {
-            l.setDepth(30)
-          } else if (layerName === 'quadroBranco') {
-            l.setDepth(40)
-          } else if (layerName === 'Wall') {
-            l.setDepth(50)
-          } else if (
-            layerName === 'Wall_nocollide' ||
-            layerName.toLowerCase().includes('nocollid') ||
-            layerName.toLowerCase().includes('wall_no')
-          ) {
-            l.setDepth(6000)
-          }
+    const createdLayers = new Set<string>()
+    if (groundLayer) {
+      createdLayers.add('Ground')
+      createdLayers.add('Floor')
+    }
+
+    this.map.layers.forEach((layerData) => {
+      const layerName = layerData.name
+      if (createdLayers.has(layerName)) return
+      createdLayers.add(layerName)
+
+      const l = this.map.createLayer(layerName, tilesetList)
+      if (l) {
+        const lower = layerName.toLowerCase()
+        const isWall = lower.includes('wall') && !lower.includes('nocollid') && !lower.includes('wall_no')
+        const isObjectsCollide =
+          lower === 'objects_collide' ||
+          lower === 'objetcs_collide' ||
+          lower.includes('object') ||
+          lower.includes('objetc')
+        const isFurniture = lower.includes('furniture') && !lower.includes('seat')
+
+        if (isWall || isObjectsCollide || isFurniture) {
+          l.setCollisionByExclusion([-1, 0])
+          collidableTileLayers.push(l)
+        }
+
+        if (lower.includes('seat')) {
+          l.setDepth(10)
+        } else if (lower.includes('sofa')) {
+          l.setDepth(15)
+        } else if (isFurniture) {
+          l.setDepth(20)
+        } else if (lower.includes('pc')) {
+          l.setDepth(30)
+        } else if (lower.includes('quadro') || lower.includes('whiteboard')) {
+          l.setDepth(40)
+        } else if (isWall) {
+          l.setDepth(50)
+        } else if (isObjectsCollide) {
+          // Objects_collide acima de Wall (50) e Furniture (20)
+          l.setDepth(60)
+        } else if (lower.includes('nocollid') || lower.includes('wall_no')) {
+          l.setDepth(6000)
+        } else {
+          l.setDepth(25)
         }
       }
     })

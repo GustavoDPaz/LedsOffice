@@ -10,11 +10,20 @@ import { proximityAudio } from './ProximityAudio'
 export async function toggleMicrophoneMute(): Promise<boolean> {
   const game = phaserGame.scene.keys.game as Game | undefined
   const currentMuted = store.getState().user.microphoneMuted
-  const nextMuted = !currentMuted
+  const hasActiveMic = proximityAudio.getMicStream()?.active
 
-  if (!nextMuted) {
+  // Se o microfone ainda não está ativo ou está mutado, o próximo estado é DESMUTAR/ATIVAR
+  const shouldUnmute = currentMuted || !hasActiveMic
+
+  if (shouldUnmute) {
     // 1. Inicializa o AudioContext
     await proximityAudio.init()
+    if (game?.network?.webRTC) {
+      const ctx = game.network.webRTC.getAudioContext()
+      if (ctx.state === 'suspended') {
+        await ctx.resume().catch(() => {})
+      }
+    }
 
     // 2. Se o microfone ainda não foi inicializado, abre via getUserMedia de áudio puro
     if (!proximityAudio.getMicStream() || !proximityAudio.getMicStream()?.active) {
@@ -24,6 +33,7 @@ export async function toggleMicrophoneMute(): Promise<boolean> {
         }
       })
       if (!ok) {
+        store.dispatch(setMicrophoneMuted(true))
         return true // Permanece mutado se permissão for negada
       }
     }
@@ -34,6 +44,7 @@ export async function toggleMicrophoneMute(): Promise<boolean> {
     const stream = proximityAudio.getMicStream()
     if (stream && game?.network?.webRTC) {
       game.network.webRTC.setAudioStream(stream)
+      game.network.webRTC.setAudioEnabled(true)
     }
 
     store.dispatch(setMicrophoneMuted(false))

@@ -7,12 +7,16 @@ import {
   setVideoMuted,
   setMicrophoneMuted,
 } from '../stores/UserStore'
+import phaserGame from '../PhaserGame'
+import { proximityAudio } from './ProximityAudio'
 
 interface PeerAudioNodes {
   source: MediaStreamAudioSourceNode
   filter: BiquadFilterNode
   panner: StereoPannerNode | null
   gain: GainNode
+  dummyAudio?: HTMLAudioElement
+  analyser?: AnalyserNode
 }
 
 export default class WebRTC {
@@ -69,10 +73,31 @@ export default class WebRTC {
     return userId.replace(/[^0-9a-z]/gi, 'G')
   }
 
+  createSilentAudioStream(): MediaStream {
+    try {
+      const ctx = this.getAudioContext()
+      const oscillator = ctx.createOscillator()
+      const dst = ctx.createMediaStreamDestination()
+      const gain = ctx.createGain()
+      gain.gain.value = 0
+      oscillator.connect(gain)
+      gain.connect(dst)
+      oscillator.start()
+      return dst.stream
+    } catch (_) {
+      return new MediaStream()
+    }
+  }
+
   initialize() {
     this.myPeer.on('call', (call) => {
       if (!this.onCalledPeers.has(call.peer)) {
-        const streamToSend = this.myStream || this.audioStream || new MediaStream()
+        const streamToSend =
+          this.myStream ||
+          this.audioStream ||
+          proximityAudio.getMicStream() ||
+          this.createSilentAudioStream()
+
         call.answer(streamToSend)
         const video = document.createElement('video')
         // Remote video elements are muted because Web Audio spatial audio handles playback
@@ -84,6 +109,10 @@ export default class WebRTC {
             this.addVideoStream(video, userVideoStream)
           }
           this.setupSpatialAudio(call.peer, userVideoStream)
+        })
+
+        call.on('close', () => {
+          this.deleteOnCalledVideoStream(call.peer)
         })
       }
     })
@@ -168,6 +197,16 @@ export default class WebRTC {
 
     this.peers.forEach(updateCall)
     this.onCalledPeers.forEach(updateCall)
+
+    // Também conecta a outros jogadores na sala aos quais ainda não ligamos
+    const game = phaserGame.scene.keys.game as any
+    if (game?.otherPlayerMap && game?.myPlayer) {
+      game.otherPlayerMap.forEach((_otherPlayer: any, id: string) => {
+        if (game.myPlayer.playerId > id) {
+          this.connectToNewUser(id)
+        }
+      })
+    }
   }
 
   setAudioEnabled(enabled: boolean) {
@@ -186,11 +225,16 @@ export default class WebRTC {
   }
 
   // Call a peer
-  connectToNewUser(userId: string) {
-    const streamToSend = this.myStream || this.audioStream
-    if (streamToSend) {
-      const sanitizedId = this.replaceInvalidId(userId)
-      if (!this.peers.has(sanitizedId)) {
+  connectToNewUser(userId: string): boolean {
+    const streamToSend =
+      this.myStream ||
+      this.audioStream ||
+      proximityAudio.getMicStream() ||
+      this.createSilentAudioStream()
+
+    const sanitizedId = this.replaceInvalidId(userId)
+    if (!this.peers.has(sanitizedId)) {
+      try {
         const call = this.myPeer.call(sanitizedId, streamToSend)
         const video = document.createElement('video')
         video.muted = true
@@ -202,8 +246,17 @@ export default class WebRTC {
           }
           this.setupSpatialAudio(sanitizedId, userVideoStream)
         })
+
+        call.on('close', () => {
+          this.deleteVideoStream(sanitizedId)
+        })
+        return true
+      } catch (err) {
+        console.warn('[WebRTC] Erro ao chamar peer', sanitizedId, err)
+        return false
       }
     }
+    return true
   }
 
   // Setup Web Audio API node chain for 3D positional audio and acoustic depth
@@ -211,9 +264,18 @@ export default class WebRTC {
     if (stream.getAudioTracks().length === 0) return
 
     const ctx = this.getAudioContext()
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {})
+    }
     this.removeSpatialAudio(peerId)
 
     try {
+      // Cria elemento de áudio oculto e MUTADO para forçar o Chromium a decodificar o stream WebRTC sem tocar em 100% no master
+      const dummyAudio = new Audio()
+      dummyAudio.srcObject = stream
+      dummyAudio.muted = true // IMPEDE VAZAMENTO A 100% NO NAVEGADOR
+      dummyAudio.play().catch(() => {})
+
       const source = ctx.createMediaStreamSource(stream)
 
       // Acoustic filter for depth (muffles sound naturally as distance increases)
@@ -226,19 +288,24 @@ export default class WebRTC {
 
       // Gain node for physical distance attenuation (proximity)
       const gain = ctx.createGain()
-      gain.gain.setValueAtTime(1, ctx.currentTime)
+      gain.gain.setValueAtTime(0, ctx.currentTime)
 
-      // Connect graph: source -> filter -> panner? -> gain -> speakers
+      // Analyser node for detecting speech activity (halo indicator)
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 256
+
+      // Connect graph: source -> filter -> analyser -> panner? -> gain -> speakers
       source.connect(filter)
+      filter.connect(analyser)
       if (panner) {
-        filter.connect(panner)
+        analyser.connect(panner)
         panner.connect(gain)
       } else {
-        filter.connect(gain)
+        analyser.connect(gain)
       }
       gain.connect(ctx.destination)
 
-      this.peerAudioNodes.set(peerId, { source, filter, panner, gain })
+      this.peerAudioNodes.set(peerId, { source, filter, panner, gain, dummyAudio, analyser })
     } catch (e) {
       console.warn('Failed to configure spatial audio for peer', peerId, e)
     }
@@ -288,14 +355,35 @@ export default class WebRTC {
     const depthFactor = Math.min(1, distance / maxDistance)
     const targetFreq = 20000 - depthFactor * 16800 // De 20.000 Hz até 3.200 Hz
     nodes.filter.frequency.setTargetAtTime(targetFreq, now, 0.05)
+
+    // 4. Update remote peer speaking halo if analyser detected speech
+    if (nodes.analyser) {
+      const data = new Uint8Array(nodes.analyser.frequencyBinCount)
+      nodes.analyser.getByteFrequencyData(data)
+      let sum = 0
+      for (let i = 0; i < data.length; i++) sum += data[i]
+      const avg = sum / data.length
+      const isSpeaking = avg > 8
+      const game = phaserGame.scene.keys.game as any
+      const other = game?.otherPlayerMap?.get(userId)
+      if (other) {
+        other.setSpeaking(isSpeaking)
+      }
+    }
   }
 
   removeSpatialAudio(peerId: string) {
     const nodes = this.peerAudioNodes.get(peerId)
     if (nodes) {
       try {
+        if (nodes.dummyAudio) {
+          nodes.dummyAudio.pause()
+          nodes.dummyAudio.srcObject = null
+          nodes.dummyAudio.remove()
+        }
         nodes.source.disconnect()
         nodes.filter.disconnect()
+        nodes.analyser?.disconnect()
         nodes.panner?.disconnect()
         nodes.gain.disconnect()
       } catch (err) {

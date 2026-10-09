@@ -35,14 +35,16 @@ export default class OtherPlayer extends Player {
     const myPlayerId = myPlayer.playerId
     if (
       !this.connected &&
-      this.connectionBufferTime >= 750 &&
+      this.connectionBufferTime >= 500 &&
       myPlayer.readyToConnect &&
       this.readyToConnect &&
       myPlayerId > this.playerId
     ) {
-      webRTC.connectToNewUser(this.playerId)
-      this.connected = true
-      this.connectionBufferTime = 0
+      const ok = webRTC.connectToNewUser(this.playerId)
+      if (ok) {
+        this.connected = true
+        this.connectionBufferTime = 0
+      }
     }
   }
 
@@ -50,19 +52,18 @@ export default class OtherPlayer extends Player {
     this.myPlayer = myPlayer
     const myPlayerId = myPlayer.playerId
 
-    // Estabelece conexão WebRTC com o colega assim que ambos estiverem prontos no escritório.
-    // O motor de áudio 3D (ProximityAudio) cuida da atenuação contínua de volume (0 fora do raio de 360px)
-    // eliminando qualquer latência ou travamento de reconexão.
     if (
       !this.connected &&
-      this.connectionBufferTime >= 750 &&
+      this.connectionBufferTime >= 500 &&
       myPlayer.readyToConnect &&
       this.readyToConnect &&
       myPlayerId > this.playerId
     ) {
-      webRTC.connectToNewUser(this.playerId)
-      this.connected = true
-      this.connectionBufferTime = 0
+      const ok = webRTC.connectToNewUser(this.playerId)
+      if (ok) {
+        this.connected = true
+        this.connectionBufferTime = 0
+      }
     }
   }
 

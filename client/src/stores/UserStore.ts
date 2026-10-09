@@ -17,10 +17,10 @@ export const userSlice = createSlice({
     sessionId: '',
     videoConnected: false,
     loggedIn: false,
-    microphoneMuted: false,
+    microphoneMuted: true,
     playerNameMap: new Map<string, string>(),
     showJoystick: window.innerWidth < 650,
-    micMuted: false,
+    micMuted: true,
     videoMuted: false,
   },
   reducers: {
