@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import styled from 'styled-components'
 import Button from '@mui/material/Button'
 import IconButton from '@mui/material/IconButton'
@@ -10,6 +10,11 @@ import LiveTvIcon from '@mui/icons-material/LiveTv'
 import VolumeUpIcon from '@mui/icons-material/VolumeUp'
 import VolumeOffIcon from '@mui/icons-material/VolumeOff'
 import CircularProgress from '@mui/material/CircularProgress'
+import FullscreenIcon from '@mui/icons-material/Fullscreen'
+import FullscreenExitIcon from '@mui/icons-material/FullscreenExit'
+import TuneIcon from '@mui/icons-material/Tune'
+import HdIcon from '@mui/icons-material/Hd'
+import Tooltip from '@mui/material/Tooltip'
 
 import { useAppSelector, useAppDispatch } from '../hooks'
 import { closeComputerDialog } from '../stores/ComputerStore'
@@ -121,6 +126,45 @@ const ViewerBadge = styled.div`
   }
 `
 
+const QualityBadge = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #34d399;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+`
+
+const FullscreenFloatBtn = styled.button`
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #f1f5f9;
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  transition: all 0.2s ease;
+  opacity: 0.7;
+
+  &:hover {
+    opacity: 1;
+    background: rgba(15, 23, 42, 0.95);
+    border-color: rgba(255, 255, 255, 0.4);
+    transform: scale(1.05);
+  }
+`
+
 const StageArea = styled.div`
   flex: 1;
   min-height: 0;
@@ -132,6 +176,13 @@ const StageArea = styled.div`
   overflow: hidden;
   position: relative;
   border: 1px solid rgba(255, 255, 255, 0.05);
+
+  &:fullscreen {
+    border-radius: 0;
+    border: none;
+    width: 100vw;
+    height: 100vh;
+  }
 `
 
 const StageVideo = styled.div`
@@ -229,11 +280,31 @@ export default function ComputerDialog() {
   const presenterId = useAppSelector((state) => state.computer.presenterId)
   const [isStarting, setIsStarting] = useState(false)
   const [isAudioMuted, setIsAudioMuted] = useState(false)
+  const [qualityMode, setQualityMode] = useState<'detail' | 'motion'>(
+    shareScreenManager?.getQualityMode() || 'detail'
+  )
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const stageRef = useRef<HTMLDivElement>(null)
+
+  // Sincroniza estado de fullscreen nativo
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement))
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    }
+  }, [])
 
   // Sair da tela de transmissão ao pressionar ESC
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'Esc') {
+        if (document.fullscreenElement) {
+          // Se estiver em fullscreen, o próprio navegador já desativa o fullscreen
+          return
+        }
         e.preventDefault()
         dispatch(closeComputerDialog())
       }
@@ -270,34 +341,97 @@ export default function ComputerDialog() {
     setIsStarting(true)
     try {
       await shareScreenManager?.startScreenShare()
+      if (shareScreenManager) {
+        setQualityMode(shareScreenManager.getQualityMode())
+      }
     } finally {
       setIsStarting(false)
     }
   }
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      stageRef.current?.requestFullscreen().catch((err) => {
+        console.warn('[ComputerDialog] Erro ao entrar em tela cheia:', err)
+      })
+    } else {
+      document.exitFullscreen().catch(() => {})
+    }
+  }
+
+  const handleToggleQualityMode = () => {
+    const nextMode = qualityMode === 'detail' ? 'motion' : 'detail'
+    shareScreenManager?.setQualityMode(nextMode)
+    setQualityMode(nextMode)
+  }
+
+  const hasActiveVideo = isSharingMyScreen || (hasRemotePresenter && peerEntries.length > 0)
 
   return (
     <Backdrop>
       <Wrapper>
         <div className="header-bar">
           <div className="header-left">
-            {/* Se eu estou transmitindo: botão para parar transmissão */}
+            {/* Se eu estou transmitindo: botão para parar transmissão + opções de qualidade */}
             {isSharingMyScreen && (
-              <Button
-                variant="contained"
-                color="error"
-                startIcon={<StopScreenShareIcon />}
-                onClick={() => shareScreenManager?.stopScreenShare()}
-                style={{
-                  fontWeight: 700,
-                  borderRadius: '8px',
-                  padding: '6px 16px',
-                }}
-              >
-                Parar Transmissão
-              </Button>
+              <>
+                <Button
+                  variant="contained"
+                  color="error"
+                  startIcon={<StopScreenShareIcon />}
+                  onClick={() => shareScreenManager?.stopScreenShare()}
+                  style={{
+                    fontWeight: 700,
+                    borderRadius: '8px',
+                    padding: '6px 16px',
+                  }}
+                >
+                  Parar Transmissão
+                </Button>
+
+                <Tooltip
+                  title={
+                    qualityMode === 'detail'
+                      ? 'Modo Nitidez Ativo: resolução nativa preservada para textos e código cristalinos. Clique para priorizar fluidez de vídeo.'
+                      : 'Modo Fluido Ativo: prioriza taxa de quadros (60fps) para vídeos/jogos. Clique para priorizar nitidez de texto.'
+                  }
+                >
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<TuneIcon />}
+                    onClick={handleToggleQualityMode}
+                    style={{
+                      color: qualityMode === 'detail' ? '#38bdf8' : '#c084fc',
+                      borderColor:
+                        qualityMode === 'detail'
+                          ? 'rgba(56, 189, 248, 0.4)'
+                          : 'rgba(192, 132, 252, 0.4)',
+                      backgroundColor:
+                        qualityMode === 'detail'
+                          ? 'rgba(56, 189, 248, 0.1)'
+                          : 'rgba(192, 132, 252, 0.1)',
+                      fontSize: '12px',
+                      textTransform: 'none',
+                      fontWeight: 600,
+                      borderRadius: '8px',
+                      padding: '5px 12px',
+                    }}
+                  >
+                    {qualityMode === 'detail'
+                      ? 'Modo: Nitidez (Texto/Código)'
+                      : 'Modo: Fluido (Vídeo/Jogos)'}
+                  </Button>
+                </Tooltip>
+
+                <QualityBadge>
+                  <HdIcon fontSize="small" style={{ color: '#10b981' }} />
+                  <span>HD 60fps • 8 Mbps</span>
+                </QualityBadge>
+              </>
             )}
 
-            {/* Se outra pessoa está transmitindo: modo espectador garantido (sem botão de compartilhar) */}
+            {/* Se outra pessoa está transmitindo: modo espectador garantido */}
             {hasRemotePresenter && !isSharingMyScreen && (
               <>
                 <ViewerBadge>
@@ -324,6 +458,10 @@ export default function ComputerDialog() {
                 >
                   {isAudioMuted ? 'Áudio Mutado' : 'Áudio Ativo'}
                 </Button>
+                <QualityBadge>
+                  <HdIcon fontSize="small" style={{ color: '#10b981' }} />
+                  <span>HD Alta Qualidade</span>
+                </QualityBadge>
               </>
             )}
 
@@ -350,6 +488,23 @@ export default function ComputerDialog() {
           </div>
 
           <div className="header-right">
+            {hasActiveVideo && (
+              <Tooltip title={isFullscreen ? 'Sair da Tela Cheia' : 'Tela Cheia (Maximizar Vídeo)'}>
+                <IconButton
+                  size="small"
+                  onClick={toggleFullscreen}
+                  style={{
+                    color: '#cbd5e1',
+                    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                    borderRadius: '8px',
+                    padding: '6px',
+                  }}
+                >
+                  {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+                </IconButton>
+              </Tooltip>
+            )}
+
             <EscBadge>
               <strong>ESC</strong> sair
             </EscBadge>
@@ -364,12 +519,22 @@ export default function ComputerDialog() {
           </div>
         </div>
 
-        <StageArea>
+        <StageArea ref={stageRef}>
+          {/* Botão flutuante de tela cheia acessível diretamente no vídeo ou em modo fullscreen */}
+          {hasActiveVideo && (
+            <FullscreenFloatBtn
+              onClick={toggleFullscreen}
+              title={isFullscreen ? 'Sair da Tela Cheia' : 'Tela Cheia'}
+            >
+              {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+            </FullscreenFloatBtn>
+          )}
+
           {/* Se eu estiver transmitindo, mostra minha tela (com áudio mutado localmente para evitar eco) */}
           {isSharingMyScreen && myStream && (
             <StageVideo>
               <Video srcObject={myStream} autoPlay muted />
-              <div className="player-tag">Sua Transmissão</div>
+              <div className="player-tag">Sua Transmissão (HD)</div>
             </StageVideo>
           )}
 
@@ -377,7 +542,7 @@ export default function ComputerDialog() {
           {!isSharingMyScreen && hasRemotePresenter && peerEntries.length > 0 && (
             <StageVideo>
               <Video srcObject={peerEntries[0][1].stream} autoPlay muted={isAudioMuted} />
-              <div className="player-tag">{presenterName}</div>
+              <div className="player-tag">{presenterName} (HD)</div>
             </StageVideo>
           )}
 
@@ -396,7 +561,7 @@ export default function ComputerDialog() {
               <h3>Nenhuma tela sendo transmitida no momento</h3>
               <p>
                 Clique em <strong>SHARE SCREEN</strong> acima para transmitir sua tela
-                para quem estiver usando este computador.
+                em alta definição para quem estiver usando este computador.
               </p>
               <span className="hint-esc">
                 Pressione <strong>ESC</strong> para sair
