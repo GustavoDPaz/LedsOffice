@@ -17,6 +17,7 @@ export default class ShareScreenManager {
   private activeCalls = new Map<string, Peer.MediaConnection>()
   private activeDataConns = new Map<string, Peer.DataConnection>()
   private retryInterval?: any
+  private qualityMode: 'detail' | 'motion' = 'detail'
 
   constructor(private userId: string) {
     const sanatizedId = this.makeId(userId)
@@ -88,7 +89,9 @@ export default class ShareScreenManager {
 
       // If I am sharing, answer with my stream. Otherwise answer to receive.
       if (this.myStream) {
-        call.answer(this.myStream)
+        // @ts-ignore
+        call.answer(this.myStream, { sdpTransform: this.boostSdpBitrate })
+        this.configurePeerConnectionQuality(call)
       } else {
         call.answer()
       }
@@ -169,6 +172,152 @@ export default class ShareScreenManager {
     return `${sanitizeId(id)}-ss`
   }
 
+  /**
+   * Modifica a descrição de sessão SDP para remover restrições de banda
+   * e instruir os navegadores a transmitirem com até 8 Mbps de taxa.
+   */
+  private boostSdpBitrate = (sdp: string, bitrateKbps = 8000): string => {
+    try {
+      const lines = sdp.split('\r\n')
+      const result: string[] = []
+      let inVideo = false
+
+      for (const line of lines) {
+        if (line.startsWith('m=video')) {
+          inVideo = true
+          result.push(line)
+          result.push(`b=AS:${bitrateKbps}`)
+          result.push(`b=TIAS:${bitrateKbps * 1000}`)
+          continue
+        } else if (line.startsWith('m=')) {
+          inVideo = false
+        }
+
+        if (inVideo && (line.startsWith('b=AS:') || line.startsWith('b=TIAS:'))) {
+          continue
+        }
+
+        result.push(line)
+      }
+
+      return result.join('\r\n')
+    } catch (e) {
+      return sdp
+    }
+  }
+
+  /**
+   * Configura o RTCRtpSender para usar alta taxa de bits (8 Mbps),
+   * manter resolução total para nitidez de texto e priorizar banda.
+   */
+  private configurePeerConnectionQuality(call: Peer.MediaConnection) {
+    try {
+      const pc = (call as any).peerConnection as RTCPeerConnection | undefined
+      if (!pc) return
+
+      let configured = false
+
+      const tryApply = async () => {
+        if (configured) return
+        try {
+          const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+          if (!videoSender) return
+
+          const params = videoSender.getParameters()
+          if (!params || !params.encodings || params.encodings.length === 0) {
+            return
+          }
+
+          let changed = false
+          for (const encoding of params.encodings) {
+            // 8 Mbps para altíssima definição (1080p/60fps ou 1440p)
+            if (encoding.maxBitrate !== 8000000) {
+              encoding.maxBitrate = 8000000
+              ;(encoding as any).maxFramerate = 60
+              ;(encoding as any).networkPriority = 'high'
+              changed = true
+            }
+          }
+
+          const targetDegradation =
+            this.qualityMode === 'motion' ? 'maintain-framerate' : 'maintain-resolution'
+          if (params.degradationPreference !== targetDegradation) {
+            params.degradationPreference = targetDegradation
+            changed = true
+          }
+
+          if (changed) {
+            await videoSender.setParameters(params)
+            configured = true
+            console.log(
+              `[ShareScreen] Qualidade do stream configurada: 8 Mbps, 60fps, ${targetDegradation}`
+            )
+          }
+        } catch (err) {
+          // Pode falhar temporariamente durante a negociação SDP inicial
+        }
+      }
+
+      // Aplica imediatamente caso o canal já esteja pronto
+      tryApply()
+
+      // Tenta quando a conexão estabilizar
+      pc.addEventListener('connectionstatechange', () => {
+        if (pc.connectionState === 'connected') {
+          tryApply()
+        }
+      })
+
+      pc.addEventListener('iceconnectionstatechange', () => {
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          tryApply()
+        }
+      })
+
+      // Retentativas com atraso após a troca dos pacotes SDP
+      setTimeout(tryApply, 500)
+      setTimeout(tryApply, 1500)
+      setTimeout(tryApply, 3000)
+    } catch (e) {
+      console.warn('[ShareScreen] Erro ao configurar qualidade do PeerConnection:', e)
+    }
+  }
+
+  /**
+   * Altera dinamicamente o modo de qualidade entre 'detail' (nitidez de texto) e 'motion' (fluidez de vídeo)
+   */
+  setQualityMode(mode: 'detail' | 'motion') {
+    this.qualityMode = mode
+    if (this.myStream) {
+      const track = this.myStream.getVideoTracks()[0]
+      if (track && 'contentHint' in track) {
+        track.contentHint = mode
+      }
+    }
+
+    const targetDegradation =
+      mode === 'motion' ? 'maintain-framerate' : 'maintain-resolution'
+
+    for (const call of this.activeCalls.values()) {
+      try {
+        const pc = (call as any).peerConnection as RTCPeerConnection | undefined
+        if (!pc) continue
+        const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+        if (!videoSender) continue
+        const params = videoSender.getParameters()
+        if (params) {
+          params.degradationPreference = targetDegradation
+          videoSender.setParameters(params).catch(() => {})
+        }
+      } catch (e) {}
+    }
+    console.log(`[ShareScreen] Modo de qualidade alterado para: ${mode}`)
+  }
+
+  getQualityMode(): 'detail' | 'motion' {
+    return this.qualityMode
+  }
+
   startScreenShare() {
     const computerState = store.getState().computer
     if (computerState.peerStreams.size > 0 || computerState.presenterId) {
@@ -180,17 +329,18 @@ export default class ShareScreenManager {
     navigator.mediaDevices
       ?.getDisplayMedia({
         video: {
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          frameRate: { ideal: 30, max: 60 },
+          width: { ideal: 2560, max: 3840 },
+          height: { ideal: 1440, max: 2160 },
+          frameRate: { ideal: 60, max: 60 },
         },
         audio: true,
       })
       .then((stream) => {
         const track = stream.getVideoTracks()[0]
         if (track) {
+          // 'detail' preserva nitidez máxima de fontes e código sem borrado
           if ('contentHint' in track) {
-            track.contentHint = 'motion'
+            track.contentHint = this.qualityMode
           }
           track.onended = () => {
             this.stopScreenShare()
@@ -367,28 +517,14 @@ export default class ShareScreenManager {
 
     try {
       console.log('[ShareScreen] Calling user with display stream:', targetPeerId)
-      const call = this.myPeer.call(targetPeerId, this.myStream)
+      // @ts-ignore
+      const call = this.myPeer.call(targetPeerId, this.myStream, {
+        sdpTransform: this.boostSdpBitrate,
+      })
       if (!call) return
 
       this.activeCalls.set(targetPeerId, call)
-
-      try {
-        const pc = (call as any).peerConnection as RTCPeerConnection | undefined
-        if (pc) {
-          pc.addEventListener('connectionstatechange', () => {
-            if (pc.connectionState === 'connected') {
-              const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
-              if (videoSender) {
-                const params = videoSender.getParameters()
-                if (params.encodings && params.encodings.length > 0) {
-                  params.encodings[0].maxBitrate = 2500000 // 2.5 Mbps ideal para 1080p leve
-                  videoSender.setParameters(params).catch(() => {})
-                }
-              }
-            }
-          })
-        }
-      } catch (e) {}
+      this.configurePeerConnectionQuality(call)
 
       call.on('close', () => {
         this.activeCalls.delete(targetPeerId)
