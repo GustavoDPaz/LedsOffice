@@ -10,7 +10,7 @@ export class ProximityAudioManager {
       extraNodes?: AudioNode[]
     }
   > = new Map()
-  private maxHearingDistance: number = 360 // Raio em pixels
+  private maxHearingDistance: number = 256 // 8 blocos (256px)
   private micStream: MediaStream | null = null
   private micSourceNode: MediaStreamAudioSourceNode | null = null
   private micAnalyser: AnalyserNode | null = null
@@ -563,4 +563,4 @@ export class ProximityAudioManager {
   }
 }
 
-export const proximityAudio = new ProximityAudioManager(360)
+export const proximityAudio = new ProximityAudioManager(256)

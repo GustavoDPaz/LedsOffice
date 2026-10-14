@@ -495,18 +495,22 @@ export default class WebRTC {
     const dy = otherY - myY
     const distance = Math.hypot(dx, dy)
 
-    // 1. Áudio espacial com atenuação suave até 450px
-    const minDistance = 60
-    const maxHearingDistance = 450
+    // 1. Áudio espacial com atenuação suave até 8 blocos (256px)
+    // 1 bloco = 32px (largura padrão dos tiles do mapa)
+    // 8 blocos = 256px (alcance máximo de audição)
+    const tileSize = 32
+    const minDistance = tileSize // 1 bloco: volume máximo (1.0)
+    const maxHearingDistance = 8 * tileSize // 8 blocos (256px): limite inaudível
 
     let targetVolume = 0
     if (distance <= minDistance) {
       targetVolume = 1.0
     } else if (distance < maxHearingDistance) {
       const factor = (distance - minDistance) / (maxHearingDistance - minDistance)
+      // Diminuição gradual e natural do som até 8 blocos
       targetVolume = Math.cos(factor * (Math.PI / 2))
     } else {
-      targetVolume = 0
+      targetVolume = 0 // Após 8 blocos não dá mais para ouvir nada
     }
 
     if (audioEntry?.audio) {
@@ -520,7 +524,8 @@ export default class WebRTC {
       let sum = 0
       for (let i = 0; i < data.length; i++) sum += data[i]
       const avg = sum / data.length
-      const isSpeaking = avg > 8
+      // Só indica fala visualmente se o jogador estiver falando E dentro do raio audível
+      const isSpeaking = avg > 8 && targetVolume > 0
 
       const game = phaserGame.scene.keys.game as any
       const other = game?.otherPlayerMap?.get(userId)
