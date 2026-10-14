@@ -27,6 +27,8 @@ export default function Video({ srcObject, ...props }: PropsType) {
       }
 
       video.addEventListener('loadedmetadata', attemptPlay)
+      video.addEventListener('canplay', attemptPlay)
+      srcObject.addEventListener('addtrack', attemptPlay)
       attemptPlay()
 
       // Retoma reprodução se o vídeo estiver pausado assim que o usuário interagir com a tela
@@ -41,6 +43,8 @@ export default function Video({ srcObject, ...props }: PropsType) {
 
       return () => {
         video.removeEventListener('loadedmetadata', attemptPlay)
+        video.removeEventListener('canplay', attemptPlay)
+        srcObject.removeEventListener('addtrack', attemptPlay)
         window.removeEventListener('click', handleInteraction)
         window.removeEventListener('keydown', handleInteraction)
       }

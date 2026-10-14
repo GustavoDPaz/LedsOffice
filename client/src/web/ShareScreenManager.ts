@@ -105,14 +105,10 @@ export default class ShareScreenManager {
           store.dispatch(setPresenterId(call.peer))
         }
 
-        if (userVideoStream.getVideoTracks().length > 0) {
+        addStream()
+
+        userVideoStream.onaddtrack = () => {
           addStream()
-        } else {
-          userVideoStream.onaddtrack = () => {
-            if (userVideoStream.getVideoTracks().length > 0) {
-              addStream()
-            }
-          }
         }
       })
 
@@ -175,29 +171,50 @@ export default class ShareScreenManager {
   /**
    * Modifica a descrição de sessão SDP para remover restrições de banda
    * e instruir os navegadores a transmitirem com até 8 Mbps de taxa.
+   * Totalmente compatível com a gramática RFC 4566 (Firefox, Safari, Chrome e Edge).
    */
   private boostSdpBitrate = (sdp: string, bitrateKbps = 8000): string => {
     try {
       const lines = sdp.split('\r\n')
       const result: string[] = []
       let inVideo = false
+      let bandwidthInserted = false
 
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+
         if (line.startsWith('m=video')) {
           inVideo = true
+          bandwidthInserted = false
           result.push(line)
-          result.push(`b=AS:${bitrateKbps}`)
-          result.push(`b=TIAS:${bitrateKbps * 1000}`)
           continue
         } else if (line.startsWith('m=')) {
+          if (inVideo && !bandwidthInserted) {
+            result.push(`b=AS:${bitrateKbps}`)
+            result.push(`b=TIAS:${bitrateKbps * 1000}`)
+            bandwidthInserted = true
+          }
           inVideo = false
         }
 
+        // Remove linhas b= duplicadas da seção de vídeo
         if (inVideo && (line.startsWith('b=AS:') || line.startsWith('b=TIAS:'))) {
           continue
         }
 
         result.push(line)
+
+        // RFC 4566: Linhas b= devem ficar estritamente após a linha c= da seção de mídia
+        if (inVideo && !bandwidthInserted && line.startsWith('c=')) {
+          result.push(`b=AS:${bitrateKbps}`)
+          result.push(`b=TIAS:${bitrateKbps * 1000}`)
+          bandwidthInserted = true
+        }
+      }
+
+      if (inVideo && !bandwidthInserted) {
+        result.push(`b=AS:${bitrateKbps}`)
+        result.push(`b=TIAS:${bitrateKbps * 1000}`)
       }
 
       return result.join('\r\n')
@@ -362,7 +379,7 @@ export default class ShareScreenManager {
             return
           }
           this.broadcastScreenShare()
-        }, 1500)
+        }, 3500)
       })
       .catch((err) => {
         console.warn('Error starting display media:', err)
@@ -378,7 +395,11 @@ export default class ShareScreenManager {
     if (computerItem) {
       for (const userId of computerItem.currentUsers) {
         if (userId !== this.userId) {
-          this.callUser(userId)
+          const targetPeerId = this.makeId(userId)
+          const existingCall = this.activeCalls.get(targetPeerId)
+          if (!existingCall) {
+            this.callUser(userId)
+          }
         }
       }
     }
@@ -509,10 +530,16 @@ export default class ShareScreenManager {
       }
     } catch (e) {}
 
-    // Check if we already have an active media call
+    // Check if we already have an active or negotiating media call
     const existingCall = this.activeCalls.get(targetPeerId)
-    if (existingCall && existingCall.open) {
-      return
+    if (existingCall) {
+      const pc = (existingCall as any).peerConnection as RTCPeerConnection | undefined
+      if (
+        existingCall.open ||
+        (pc && pc.connectionState !== 'failed' && pc.connectionState !== 'closed')
+      ) {
+        return
+      }
     }
 
     try {

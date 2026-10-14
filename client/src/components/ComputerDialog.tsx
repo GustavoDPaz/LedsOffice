@@ -279,7 +279,7 @@ export default function ComputerDialog() {
   const peerStreams = useAppSelector((state) => state.computer.peerStreams)
   const presenterId = useAppSelector((state) => state.computer.presenterId)
   const [isStarting, setIsStarting] = useState(false)
-  const [isAudioMuted, setIsAudioMuted] = useState(false)
+  const [isAudioMuted, setIsAudioMuted] = useState(true)
   const [qualityMode, setQualityMode] = useState<'detail' | 'motion'>(
     shareScreenManager?.getQualityMode() || 'detail'
   )
